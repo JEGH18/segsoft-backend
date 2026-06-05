@@ -1,0 +1,34 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/pdgseg_test
+    username: pdgseg_test
+    password: pdgseg_test
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    ignore-migration-patterns: "*:Missing,*:Future"
+
+engine:
+  base-url: http://localhost:18001
+  service-token: test-internal-token
+
+sandbox:
+  root: /tmp/pdgseg-sandbox-test
+  max-repo-size-mb: 10
+  max-file-count: 100
+
+jwt:
+  secret: test-secret-for-integration-tests-minimum-32-characters
+  access-token-expiration-ms: 900000
+  refresh-token-expiration-ms: 28800000
+
+cors:
+  allowed-origins: http://localhost:5173
+
+auth:
+  cookie:
+    secure: false

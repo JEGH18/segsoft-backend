@@ -1,0 +1,21 @@
+# Maven / Java build artifacts
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Secrets
+.env
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
