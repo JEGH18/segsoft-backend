@@ -32,7 +32,7 @@ services:
 
   engine-python:
     build:
-      context: ../SegSoft-MotorPython
+      context: ../segsoft-motorpython
     restart: unless-stopped
     env_file:
       - .env
