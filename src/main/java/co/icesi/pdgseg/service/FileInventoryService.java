@@ -79,7 +79,9 @@ public class FileInventoryService {
             Map.entry("m", "matlab"),
             Map.entry("pl", "perl"),
             Map.entry("lua", "lua"),
-            Map.entry("dart", "dart")
+            Map.entry("dart", "dart"),
+            Map.entry("vue", "javascript"),
+            Map.entry("svelte", "javascript")
     );
 
     private List<String> dirExclusionNames;

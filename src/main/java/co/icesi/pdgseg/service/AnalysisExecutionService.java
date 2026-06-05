@@ -145,9 +145,15 @@ public class AnalysisExecutionService {
             return;
         }
 
+        List<String> ruleLanguages = ruleSnapshot.languages();
+        boolean hasLanguageFilter = ruleLanguages != null && !ruleLanguages.isEmpty();
+
         for (RepositoryFile file : files) {
             if (isCancelled(analysis.getId())) {
                 return;
+            }
+            if (hasLanguageFilter && !ruleLanguages.contains(file.getLanguage())) {
+                continue;
             }
             try {
                 String artifactPath = (basePath != null && !basePath.isBlank())
@@ -160,7 +166,8 @@ public class AnalysisExecutionService {
                         artifactPath
                 );
                 ExecuteRuleResponse response = engineClient.executeRule(request, traceId);
-                persistFindings(analysis, policy, rule, file, ruleSnapshot, response.findings());
+                List<EngineFindingResponse> deduped = deduplicateFindings(response.findings());
+                persistFindings(analysis, policy, rule, file, ruleSnapshot, deduped);
                 persistEngineErrors(analysis, policy, rule, file.getPath(), response.errors());
             } catch (Exception ex) {
                 registerRuleError(analysis, policy, rule, "ENGINE_ERROR", ex.getMessage(), file.getPath());
@@ -291,6 +298,18 @@ public class AnalysisExecutionService {
             return PolicyComplianceStatus.NON_COMPLIANT;
         }
         return PolicyComplianceStatus.REQUIRES_REVIEW;
+    }
+
+    private List<EngineFindingResponse> deduplicateFindings(List<EngineFindingResponse> findings) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<EngineFindingResponse> result = new ArrayList<>();
+        for (EngineFindingResponse f : findings) {
+            String key = f.lineNumber() + "|" + (f.evidenceSnippet() != null ? f.evidenceSnippet() : "");
+            if (seen.add(key)) {
+                result.add(f);
+            }
+        }
+        return result;
     }
 
     private SeverityLevel resolveSeverity(String engineSeverity, String fallback) {

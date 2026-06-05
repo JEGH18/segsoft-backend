@@ -53,7 +53,8 @@ public class AnalysisSnapshotService {
                     rule.getType().name(),
                     rule.getSeverity().name(),
                     rule.getCategory(),
-                    rule.getPayload() != null ? rule.getPayload() : Map.of()
+                    rule.getPayload() != null ? rule.getPayload() : Map.of(),
+                    rule.getLanguages() != null ? rule.getLanguages() : List.of()
             );
             rulesByPolicy.computeIfAbsent(rule.getPolicy().getId(), key -> new ArrayList<>()).add(ruleSnapshot);
         }
