@@ -29,6 +29,8 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: default
+    volumes:
+      - sandbox:/tmp/pdgseg-sandbox
 
   engine-python:
     build:
@@ -38,6 +40,9 @@ services:
       - .env
     ports:
       - "8001:8001"
+    volumes:
+      - sandbox:/tmp/pdgseg-sandbox
 
 volumes:
   pgdata:
+  sandbox:

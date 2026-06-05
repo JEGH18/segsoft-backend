@@ -185,7 +185,7 @@ public class AnalysisExecutionService {
             finding.setRepository(analysis.getRepository());
             finding.setPolicy(policy);
             finding.setRule(rule);
-            finding.setSeverity(resolveSeverity(engineFinding.severity(), ruleSnapshot.severity()));
+            finding.setSeverity(resolveSeverity(ruleSnapshot.severity(), engineFinding.severity()));
             finding.setCategory(
                     (engineFinding.category() != null && !"UNKNOWN".equalsIgnoreCase(engineFinding.category()))
                             ? engineFinding.category()

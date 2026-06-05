@@ -13,6 +13,7 @@ WORKDIR /app
 RUN addgroup -S pdgseg && adduser -S pdgseg -G pdgseg
 COPY --from=build /workspace/build/libs/*.jar app.jar
 RUN chown pdgseg:pdgseg app.jar
+RUN mkdir -p /tmp/pdgseg-sandbox && chown -R pdgseg:pdgseg /tmp/pdgseg-sandbox
 USER pdgseg
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
