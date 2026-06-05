@@ -1,0 +1,96 @@
+plugins {
+    id 'org.springframework.boot' version '3.3.0'
+    id 'io.spring.dependency-management' version '1.1.5'
+    id 'java'
+}
+
+group = 'co.icesi'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    springdocVersion    = '2.5.0'
+    bucket4jVersion     = '8.10.1'
+    logstashVersion     = '7.4'
+    auth0JwtVersion     = '4.4.0'
+    openPdfVersion      = '1.3.35'
+    testcontainersVersion = '1.20.4'
+}
+
+dependencies {
+    // Web
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // JPA
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    // Security
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // Validation
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Actuator
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // PostgreSQL driver
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // Flyway
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // JWT
+    implementation "com.auth0:java-jwt:${auth0JwtVersion}"
+
+    // Rate limiting
+    implementation "com.bucket4j:bucket4j-core:${bucket4jVersion}"
+
+    // JSON structured logging
+    implementation "net.logstash.logback:logstash-logback-encoder:${logstashVersion}"
+    implementation 'org.codehaus.janino:janino'
+
+    // Prometheus metrics
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+    // OpenAPI / Swagger UI
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+
+    // PDF export
+    implementation "com.github.librepdf:openpdf:${openPdfVersion}"
+
+    // Argon2id (Spring Security Argon2PasswordEncoder)
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation "org.testcontainers:postgresql:${testcontainersVersion}"
+    testImplementation "org.testcontainers:junit-jupiter:${testcontainersVersion}"
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+// Excluye integration tests del ciclo normal (requieren Docker)
+test {
+    exclude '**/*IntegrationTest.class'
+}
+
+// ./gradlew integrationTest — equivalente a mvn test -Pintegration-tests
+tasks.register('integrationTest', Test) {
+    description = 'Runs integration tests (requires Docker/Testcontainers)'
+    group = 'verification'
+    include '**/*Test.class'
+    include '**/*IntegrationTest.class'
+    environment 'TESTCONTAINERS_RYUK_DISABLED', 'true'
+    useJUnitPlatform()
+}

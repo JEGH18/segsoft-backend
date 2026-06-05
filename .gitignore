@@ -1,9 +1,13 @@
-# Maven / Java build artifacts
-target/
+# Gradle build artifacts
+build/
+.gradle/
 *.class
 *.jar
 *.war
 *.ear
+
+# Gradle wrapper (keep the jar)
+!gradle/wrapper/gradle-wrapper.jar
 
 # Secrets
 .env

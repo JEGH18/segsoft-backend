@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Build y Test Maven
+    name: Build y Test Gradle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +17,10 @@ jobs:
         with:
           java-version: '17'
           distribution: temurin
-          cache: maven
+          cache: gradle
+
+      - name: Dar permisos al wrapper
+        run: chmod +x gradlew
 
       - name: Ejecutar tests
-        run: mvn test -B
+        run: ./gradlew test --no-daemon

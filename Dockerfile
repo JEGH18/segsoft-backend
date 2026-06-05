@@ -1,16 +1,17 @@
 # Stage 1: build
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM gradle:8.10.1-jdk17 AS build
 WORKDIR /workspace
-COPY pom.xml .
-RUN mvn dependency:go-offline -B
+COPY build.gradle settings.gradle ./
+COPY gradle ./gradle
+RUN gradle dependencies --no-daemon -q
 COPY src ./src
-RUN mvn package -DskipTests -B
+RUN gradle bootJar --no-daemon -x test
 
 # Stage 2: runtime
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 RUN addgroup -S pdgseg && adduser -S pdgseg -G pdgseg
-COPY --from=build /workspace/target/*.jar app.jar
+COPY --from=build /workspace/build/libs/*.jar app.jar
 RUN chown pdgseg:pdgseg app.jar
 USER pdgseg
 EXPOSE 8080
