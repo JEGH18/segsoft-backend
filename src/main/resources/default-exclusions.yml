@@ -1,0 +1,19 @@
+exclusions:
+  directories:
+    - node_modules/
+    - target/
+    - build/
+    - .git/
+    - vendor/
+    - dist/
+    - __pycache__/
+    - .idea/
+    - .vscode/
+    - coverage/
+    - .nyc_output/
+  files:
+    - "*.min.js"
+    - "*.pyc"
+    - "*.class"
+    - "*.jar"
+    - "*.war"

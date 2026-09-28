@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <includeContext>false</includeContext>
+      <customFields>{"service":"pdgseg-backend"}</customFields>
+      <fieldNames>
+        <timestamp>timestamp</timestamp>
+        <message>message</message>
+        <logger>logger</logger>
+        <thread>thread</thread>
+        <levelValue>[ignore]</levelValue>
+      </fieldNames>
+      <provider class="net.logstash.logback.composite.loggingevent.MdcJsonProvider"/>
+    </encoder>
+  </appender>
+
+  <springProfile name="!test">
+    <root level="INFO">
+      <appender-ref ref="CONSOLE"/>
+    </root>
+  </springProfile>
+
+  <springProfile name="test">
+    <root level="WARN">
+      <appender-ref ref="CONSOLE"/>
+    </root>
+  </springProfile>
+
+  <logger name="co.icesi.pdgseg" level="INFO"/>
+  <logger name="org.flywaydb" level="INFO"/>
+  <logger name="org.springframework.security" level="WARN"/>
+  <logger name="org.hibernate.SQL" level="WARN"/>
+
+</configuration>

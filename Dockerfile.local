@@ -1,0 +1,8 @@
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+RUN addgroup -S pdgseg && adduser -S pdgseg -G pdgseg
+COPY target/*.jar app.jar
+RUN chown pdgseg:pdgseg app.jar
+USER pdgseg
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]

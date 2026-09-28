@@ -1,0 +1,28 @@
+server:
+  port: 8090
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/pdgseg_test
+    username: pdgseg_test
+    password: pdgseg_test
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+jwt:
+  secret: dev-secret-for-local-development-minimum-32-chars-ok
+
+engine:
+  base-url: http://localhost:18001
+  service-token: dev-internal-token
+
+sandbox:
+  root: /tmp/pdgseg-sandbox-dev
+
+logging:
+  level:
+    co.icesi.pdgseg: DEBUG
+    org.springframework.security: DEBUG
