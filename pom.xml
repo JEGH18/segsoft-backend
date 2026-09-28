@@ -24,7 +24,9 @@
     <bucket4j.version>8.10.1</bucket4j.version>
     <logstash.version>7.4</logstash.version>
     <auth0-jwt.version>4.4.0</auth0-jwt.version>
+    <!-- Pinned on purpose: see segsoft-docs/adr/0001-libreria-pdf-openpdf.md -->
     <openpdf.version>1.3.35</openpdf.version>
+    <pdfbox.version>3.0.7</pdfbox.version>
     <testcontainers.version>1.20.4</testcontainers.version>
   </properties>
 
@@ -114,7 +116,10 @@
       <version>${springdoc.version}</version>
     </dependency>
 
-    <!-- PDF export -->
+    <!-- PDF export (HU "Exportar reporte de cumplimiento en PDF").
+         OpenPDF (LGPL-2.1 / MPL-2.0) instead of iText 7 (AGPL-3.0): AGPL would
+         force releasing SegSoft's source to anyone it is distributed to or
+         served over a network. Decision: segsoft-docs/adr/0001-libreria-pdf-openpdf.md -->
     <dependency>
       <groupId>com.github.librepdf</groupId>
       <artifactId>openpdf</artifactId>
@@ -149,6 +154,14 @@
       <groupId>org.testcontainers</groupId>
       <artifactId>junit-jupiter</artifactId>
       <version>${testcontainers.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Independent PDF parser used by the tests to validate exported reports
+         and extract their text (Apache-2.0, test scope only). -->
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>${pdfbox.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
