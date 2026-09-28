@@ -116,6 +116,19 @@ public class GlobalExceptionHandler {
         return errorBody(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage());
     }
 
+    @ExceptionHandler(ReportIntegrityException.class)
+    public ResponseEntity<Map<String, Object>> handleReportIntegrity(ReportIntegrityException ex) {
+        return errorBody(HttpStatus.CONFLICT, "REPORT_INTEGRITY_ERROR", ex.getMessage());
+    }
+
+    @ExceptionHandler(UnsupportedExportFormatException.class)
+    public ResponseEntity<Map<String, Object>> handleUnsupportedExportFormat(UnsupportedExportFormatException ex) {
+        ResponseEntity<Map<String, Object>> response =
+                errorBody(HttpStatus.BAD_REQUEST, "UNSUPPORTED_FORMAT", ex.getMessage());
+        response.getBody().put("supportedFormats", ex.getSupportedFormats());
+        return response;
+    }
+
     @ExceptionHandler(UnprocessableEntityException.class)
     public ResponseEntity<Map<String, Object>> handleUnprocessable(UnprocessableEntityException ex) {
         return errorBody(HttpStatus.UNPROCESSABLE_ENTITY, "UNPROCESSABLE_ENTITY", ex.getMessage());
