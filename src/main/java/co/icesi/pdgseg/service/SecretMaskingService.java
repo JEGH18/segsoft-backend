@@ -25,6 +25,9 @@ public class SecretMaskingService {
             "(?i)((?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|password|passwd|pwd|credentials?)"
                     + "[\"']?\\s*[:=]\\s*[\"']?)([^\\s\"']+)");
 
+    /** The mask plus trailing punctuation only, so "*****secret" is still masked. */
+    private static final Pattern ALREADY_MASKED = Pattern.compile("\\*{5}[,;)\\]}]*");
+
     /** Secrets recognizable by their shape even without a telling key name. */
     private static final List<Pattern> VALUE_PATTERNS = List.of(
             // AWS access key id
@@ -57,8 +60,11 @@ public class SecretMaskingService {
                 .replaceAll(match -> Matcher.quoteReplacement(
                         "-----BEGIN " + match.group(1) + "PRIVATE KEY-----" + MASK
                                 + "-----END " + match.group(1) + "PRIVATE KEY-----"));
+        // A value already starting with the mask was masked upstream (the
+        // engine masks up to the next ',' or ';'); re-masking it would also eat
+        // the punctuation that follows it.
         masked = KEY_VALUE_PATTERN.matcher(masked).replaceAll(match ->
-                MASK.equals(match.group(2)) ? Matcher.quoteReplacement(match.group())
+                ALREADY_MASKED.matcher(match.group(2)).matches() ? Matcher.quoteReplacement(match.group())
                         : Matcher.quoteReplacement(match.group(1) + MASK));
         masked = BEARER_PATTERN.matcher(masked).replaceAll("$1" + Matcher.quoteReplacement(MASK));
         masked = URL_CREDENTIALS_PATTERN.matcher(masked).replaceAll("$1" + Matcher.quoteReplacement(MASK) + "$2");

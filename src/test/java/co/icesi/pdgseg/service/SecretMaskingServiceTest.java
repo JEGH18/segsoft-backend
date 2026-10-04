@@ -53,6 +53,17 @@ class SecretMaskingServiceTest {
     }
 
     @Test
+    void keepsThePunctuationAfterAValueTheEngineAlreadyMasked() {
+        String engineMasked = "log.info(\"login password=*****, username, password);";
+        assertThat(masking.mask(engineMasked)).isEqualTo(engineMasked);
+    }
+
+    @Test
+    void aSecretGluedToAMaskIsStillMasked() {
+        assertThat(masking.mask("password=*****hunter2")).isEqualTo("password=*****");
+    }
+
+    @Test
     void leavesOrdinaryCodeUntouched() {
         String code = "String q = \"SELECT * FROM users WHERE id=\" + id; tokenizer.split(passwordField);";
         assertThat(masking.mask(code)).isEqualTo(code);
