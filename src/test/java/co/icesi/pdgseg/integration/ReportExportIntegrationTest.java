@@ -3,8 +3,10 @@ package co.icesi.pdgseg.integration;
 import co.icesi.pdgseg.entity.Role;
 import co.icesi.pdgseg.entity.User;
 import co.icesi.pdgseg.entity.enums.RoleType;
+import co.icesi.pdgseg.export.sarif.SarifSchemaValidator;
 import co.icesi.pdgseg.repository.RoleRepository;
 import co.icesi.pdgseg.repository.UserRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -21,6 +23,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -129,6 +132,32 @@ class ReportExportIntegrationTest extends PostgreSQLContainerBase {
     }
 
     @Test
+    void sarifExport_returnsSchemaValidSarifWithRepositoryRelativeLocations() throws Exception {
+        UUID reportId = generateReport();
+
+        MvcResult result = mockMvc.perform(get("/api/v1/reports/{id}/export", reportId)
+                        .param("format", "sarif")
+                        .header("Authorization", "Bearer " + auditorToken))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/sarif+json"))
+                .andExpect(header().string("Content-Disposition",
+                        containsString("filename=\"segsoft-report-" + reportId + ".sarif\"")))
+                .andReturn();
+
+        String sarif = new String(result.getResponse().getContentAsByteArray(), StandardCharsets.UTF_8);
+        new SarifSchemaValidator().validate(sarif);
+        assertThat(sarif).doesNotContain(PLANTED_SECRET);
+
+        JsonNode run = objectMapper.readTree(sarif).path("runs").get(0);
+        assertThat(run.path("tool").path("driver").path("name").asText()).isEqualTo("PDG-SegSoft");
+        JsonNode finding = run.path("results").get(0);
+        assertThat(finding.path("level").asText()).isEqualTo("error");
+        JsonNode location = finding.path("locations").get(0).path("physicalLocation");
+        assertThat(location.path("artifactLocation").path("uri").asText()).isEqualTo("src/db/UserDao.java");
+        assertThat(location.path("region").path("startLine").asInt()).isEqualTo(42);
+    }
+
+    @Test
     void unsupportedFormat_returns400ListingSupportedFormats() throws Exception {
         UUID reportId = generateReport();
 
@@ -137,7 +166,8 @@ class ReportExportIntegrationTest extends PostgreSQLContainerBase {
                         .header("Authorization", "Bearer " + auditorToken))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("UNSUPPORTED_FORMAT"))
-                .andExpect(jsonPath("$.supportedFormats[0]").value("pdf"));
+                .andExpect(jsonPath("$.supportedFormats[0]").value("pdf"))
+                .andExpect(jsonPath("$.supportedFormats[1]").value("sarif"));
     }
 
     @Test
