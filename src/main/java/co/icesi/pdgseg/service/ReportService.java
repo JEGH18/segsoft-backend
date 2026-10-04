@@ -12,6 +12,7 @@ import co.icesi.pdgseg.dto.report.ReportDocument;
 import co.icesi.pdgseg.dto.response.AnalysisResultsResponse;
 import co.icesi.pdgseg.dto.response.FindingResponse;
 import co.icesi.pdgseg.dto.response.ReportResponse;
+import co.icesi.pdgseg.dto.response.ReportSummaryResponse;
 import co.icesi.pdgseg.dto.snapshot.PolicySnapshotDto;
 import co.icesi.pdgseg.dto.snapshot.RuleSnapshotDto;
 import co.icesi.pdgseg.entity.Analysis;
@@ -30,6 +31,8 @@ import co.icesi.pdgseg.exception.ResourceNotFoundException;
 import co.icesi.pdgseg.exception.UnprocessableEntityException;
 import co.icesi.pdgseg.export.ReportExporter;
 import co.icesi.pdgseg.export.ReportExporterRegistry;
+import co.icesi.pdgseg.export.cache.ExportFileCache;
+import co.icesi.pdgseg.export.cache.ExportSizeLimit;
 import co.icesi.pdgseg.repository.AnalysisRepository;
 import co.icesi.pdgseg.repository.PolicyResultRepository;
 import co.icesi.pdgseg.repository.ReportRepository;
@@ -37,6 +40,8 @@ import co.icesi.pdgseg.repository.RuleRepository;
 import co.icesi.pdgseg.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +73,8 @@ public class ReportService {
     private final AnalysisSnapshotService analysisSnapshotService;
     private final SecretMaskingService secretMaskingService;
     private final ReportExporterRegistry exporterRegistry;
+    private final ExportFileCache exportCache;
+    private final ExportSizeLimit exportSizeLimit;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
@@ -81,6 +88,8 @@ public class ReportService {
             AnalysisSnapshotService analysisSnapshotService,
             SecretMaskingService secretMaskingService,
             ReportExporterRegistry exporterRegistry,
+            ExportFileCache exportCache,
+            ExportSizeLimit exportSizeLimit,
             AuditService auditService,
             ObjectMapper objectMapper
     ) {
@@ -93,6 +102,8 @@ public class ReportService {
         this.analysisSnapshotService = analysisSnapshotService;
         this.secretMaskingService = secretMaskingService;
         this.exporterRegistry = exporterRegistry;
+        this.exportCache = exportCache;
+        this.exportSizeLimit = exportSizeLimit;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
     }
@@ -132,38 +143,101 @@ public class ReportService {
     }
 
     /**
-     * Resolves the exporter first (unsupported format -> 400 without touching
-     * the database), then loads and verifies the report (404 / 409) and only
-     * then renders it, so a tampered report never produces a file.
+     * Order of checks: unsupported format (400, without touching the
+     * database), unknown report (404), integrity (409), then the export
+     * cache, then the size limit (422). Integrity is verified on every
+     * request, cache hit or not, so a tampered report never yields a file.
+     *
+     * The cache key embeds the verified checksum, so a report whose content
+     * changes never matches an older export. A file above MAX_EXPORT_SIZE_MB
+     * is rejected before it is cached; a cached one is checked again in case
+     * the limit was lowered after it was stored.
      *
      * Deliberately not transactional: the integrity-violation audit entry must
      * be committed even though the call ends in an exception.
      */
     public ExportedReport export(UUID reportId, String format, String username) {
         ReportExporter exporter = exporterRegistry.resolve(format);
-        ReportDocument document = loadVerified(reportId, username);
-        byte[] bytes = exporter.export(document);
-        auditService.record("REPORT_EXPORTED", username, null,
-                Map.of("reportId", reportId.toString(), "format", exporter.format()));
-        return new ExportedReport(bytes, exporter.mediaType(),
-                "segsoft-report-" + reportId + "." + exporter.fileExtension());
+        Report report = loadVerified(reportId, username);
+
+        String key = ExportFileCache.key(reportId, exporter.format(), report.getChecksum());
+        ExportFileCache.Lookup lookup = exportCache.getOrCreate(key, () -> {
+            byte[] bytes = exporter.export(toDocument(report));
+            exportSizeLimit.check(bytes.length);
+            return bytes;
+        });
+        exportSizeLimit.check(lookup.content().length);
+
+        auditService.record("REPORT_EXPORTED", username, null, Map.of(
+                "reportId", reportId.toString(),
+                "format", exporter.format(),
+                "cache", lookup.hit() ? "HIT" : "MISS"));
+        return new ExportedReport(lookup.content(), exporter.mediaType(),
+                "segsoft-report-" + reportId + "." + exporter.fileExtension(), lookup.hit());
     }
 
-    private ReportDocument loadVerified(UUID reportId, String username) {
+    public Page<ReportSummaryResponse> list(UUID analysisId, Pageable pageable) {
+        Page<Report> reports = analysisId != null
+                ? reportRepository.findByAnalysisIdOrderByGeneratedAtDesc(analysisId, pageable)
+                : reportRepository.findAllByOrderByGeneratedAtDesc(pageable);
+        return reports.map(this::toSummary);
+    }
+
+    public ReportSummaryResponse get(UUID reportId) {
+        return reportRepository.findById(reportId)
+                .map(this::toSummary)
+                .orElseThrow(() -> new ResourceNotFoundException("Reporte no encontrado"));
+    }
+
+    private ReportSummaryResponse toSummary(Report report) {
+        boolean integrityVerified = checksumMatches(report);
+        ReportContent content = null;
+        try {
+            content = objectMapper.readValue(report.getContentJson(), ReportContent.class);
+        } catch (JsonProcessingException e) {
+            // Unreadable content: the view still lists the report, without its figures.
+        }
+        Summary summary = content != null ? content.summary() : null;
+        Metadata metadata = content != null ? content.metadata() : null;
+        return new ReportSummaryResponse(
+                report.getId(),
+                metadata != null ? metadata.analysisId() : null,
+                report.getStatus(),
+                report.getChecksum(),
+                report.getGeneratedAt(),
+                metadata != null ? metadata.generatedBy() : null,
+                metadata != null ? metadata.repositoryName() : null,
+                summary != null ? summary.compliancePercentage() : null,
+                summary != null ? summary.weightedCompliancePercentage() : null,
+                summary != null ? summary.policiesEvaluated() : null,
+                summary != null ? summary.totalFindings() : null,
+                summary != null ? summary.findingsBySeverity() : null,
+                integrityVerified,
+                exporterRegistry.supportedFormats()
+        );
+    }
+
+    private Report loadVerified(UUID reportId, String username) {
         Report report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new ResourceNotFoundException("Reporte no encontrado"));
-
-        byte[] expected = report.getChecksum() == null
-                ? new byte[0]
-                : report.getChecksum().toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII);
-        byte[] actual = sha256Hex(report.getContentJson()).getBytes(StandardCharsets.US_ASCII);
-        if (!MessageDigest.isEqual(expected, actual)) {
+        if (!checksumMatches(report)) {
             auditService.record("REPORT_INTEGRITY_VIOLATION", username, null,
                     Map.of("reportId", reportId.toString()));
             throw new ReportIntegrityException(
                     "El checksum almacenado del reporte no coincide con su contenido; no se generó el archivo");
         }
+        return report;
+    }
 
+    private static boolean checksumMatches(Report report) {
+        byte[] expected = report.getChecksum() == null
+                ? new byte[0]
+                : report.getChecksum().toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII);
+        byte[] actual = sha256Hex(report.getContentJson()).getBytes(StandardCharsets.US_ASCII);
+        return MessageDigest.isEqual(expected, actual);
+    }
+
+    private ReportDocument toDocument(Report report) {
         ReportContent content;
         try {
             content = objectMapper.readValue(report.getContentJson(), ReportContent.class);

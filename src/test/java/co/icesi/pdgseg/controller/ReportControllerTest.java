@@ -3,7 +3,9 @@ package co.icesi.pdgseg.controller;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.report.ExportedReport;
 import co.icesi.pdgseg.dto.response.ReportResponse;
+import co.icesi.pdgseg.dto.response.ReportSummaryResponse;
 import co.icesi.pdgseg.entity.enums.ReportStatus;
+import co.icesi.pdgseg.exception.ExportTooLargeException;
 import co.icesi.pdgseg.exception.ReportIntegrityException;
 import co.icesi.pdgseg.exception.ResourceNotFoundException;
 import co.icesi.pdgseg.exception.SarifValidationException;
@@ -21,10 +23,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -64,7 +69,7 @@ class ReportControllerTest {
 
     private void stubPdfExport() {
         when(reportService.export(eq(reportId), eq("pdf"), anyString())).thenReturn(new ExportedReport(
-                PDF_BYTES, MediaType.APPLICATION_PDF, "segsoft-report-" + reportId + ".pdf"));
+                PDF_BYTES, MediaType.APPLICATION_PDF, "segsoft-report-" + reportId + ".pdf", false));
     }
 
     // ---- 200 -------------------------------------------------------------------------
@@ -80,6 +85,7 @@ class ReportControllerTest {
                 .andExpect(header().string("Content-Disposition",
                         "attachment; filename=\"segsoft-report-" + reportId + ".pdf\""))
                 .andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andExpect(header().string("X-Cache", "MISS"))
                 .andExpect(content().bytes(PDF_BYTES));
         verify(reportService).export(reportId, "pdf", "auditor");
     }
@@ -109,13 +115,14 @@ class ReportControllerTest {
     void export_sarif_returnsSarifJsonAsAttachment() throws Exception {
         byte[] sarif = "{\"version\":\"2.1.0\",\"runs\":[]}".getBytes();
         when(reportService.export(eq(reportId), eq("sarif"), anyString())).thenReturn(new ExportedReport(
-                sarif, MediaType.valueOf("application/sarif+json"), "segsoft-report-" + reportId + ".sarif"));
+                sarif, MediaType.valueOf("application/sarif+json"), "segsoft-report-" + reportId + ".sarif", true));
 
         mockMvc.perform(get("/api/v1/reports/{id}/export", reportId).param("format", "sarif"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType("application/sarif+json"))
                 .andExpect(header().string("Content-Disposition",
                         "attachment; filename=\"segsoft-report-" + reportId + ".sarif\""))
+                .andExpect(header().string("X-Cache", "HIT"))
                 .andExpect(content().bytes(sarif));
     }
 
@@ -180,6 +187,59 @@ class ReportControllerTest {
                 .contains("SARIF inválido descartado")
                 .contains("traceId=trace-sarif-invalido")
                 .contains("critical is not a valid enum value");
+    }
+
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void export_aboveMaxExportSize_returns422StatingTheLimit() throws Exception {
+        when(reportService.export(eq(reportId), eq("pdf"), anyString()))
+                .thenThrow(new ExportTooLargeException(60L * 1024 * 1024, 50));
+
+        mockMvc.perform(get("/api/v1/reports/{id}/export", reportId).param("format", "pdf"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(header().doesNotExist("Content-Disposition"))
+                .andExpect(jsonPath("$.errorCode").value("EXPORT_TOO_LARGE"))
+                .andExpect(jsonPath("$.maxSizeMb").value(50))
+                .andExpect(jsonPath("$.message").value(containsString("50 MB")));
+    }
+
+    // ---- Report view ---------------------------------------------------------------------
+
+    private ReportSummaryResponse summary() {
+        return new ReportSummaryResponse(reportId, UUID.randomUUID(), ReportStatus.GENERATED, "a".repeat(64),
+                OffsetDateTime.now(), "auditor", "acme-app", new BigDecimal("91.30"), new BigDecimal("92.50"),
+                23, 2, java.util.Map.of("MEDIUM", 2), true, List.of("pdf", "sarif"));
+    }
+
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void get_returnsTheReportSummary() throws Exception {
+        when(reportService.get(reportId)).thenReturn(summary());
+
+        mockMvc.perform(get("/api/v1/reports/{id}", reportId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("GENERATED"))
+                .andExpect(jsonPath("$.repositoryName").value("acme-app"))
+                .andExpect(jsonPath("$.integrityVerified").value(true))
+                .andExpect(jsonPath("$.exportFormats[1]").value("sarif"));
+    }
+
+    @Test
+    @WithMockUser(username = "admin", roles = "SECURITY_ADMIN")
+    void list_returnsAPageOfReports() throws Exception {
+        when(reportService.list(eq(null), any())).thenReturn(new PageImpl<>(List.of(summary()), PageRequest.of(0, 20), 1));
+
+        mockMvc.perform(get("/api/v1/reports"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(reportId.toString()))
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    @WithMockUser(username = "dev", roles = "DEVELOPER")
+    void reportView_isNotAvailableToDevelopers() throws Exception {
+        mockMvc.perform(get("/api/v1/reports/{id}", reportId)).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/reports")).andExpect(status().isForbidden());
     }
 
     // ---- Roles ---------------------------------------------------------------------------

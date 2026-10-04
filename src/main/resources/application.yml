@@ -57,6 +57,14 @@ rule:
   timeout-ms: ${RULE_TIMEOUT_MS:30000}
 
 report:
+  export:
+    # Larger exports are rejected with HTTP 422 and never cached.
+    max-size-mb: ${MAX_EXPORT_SIZE_MB:50}
+    cache:
+      dir: ${EXPORT_CACHE_DIR:${java.io.tmpdir}/pdgseg-export-cache}
+      # How long an exported file is reused; PT0S disables the cache.
+      ttl: ${EXPORT_CACHE_TTL:PT1H}
+      cleanup-interval: ${EXPORT_CACHE_CLEANUP_INTERVAL:PT15M}
   sarif:
     # Filled in by Maven resource filtering with the pom version.
     tool-version: "@project.version@"
