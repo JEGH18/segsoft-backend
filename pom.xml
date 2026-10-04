@@ -27,6 +27,7 @@
     <!-- Pinned on purpose: see segsoft-docs/adr/0001-libreria-pdf-openpdf.md -->
     <openpdf.version>1.3.35</openpdf.version>
     <pdfbox.version>3.0.7</pdfbox.version>
+    <everit-json-schema.version>1.14.6</everit-json-schema.version>
     <testcontainers.version>1.20.4</testcontainers.version>
   </properties>
 
@@ -124,6 +125,15 @@
       <groupId>com.github.librepdf</groupId>
       <artifactId>openpdf</artifactId>
       <version>${openpdf.version}</version>
+    </dependency>
+
+    <!-- SARIF export: every generated document is validated against the
+         official SARIF 2.1.0 JSON schema (src/main/resources/sarif) before
+         it is served. Apache-2.0. -->
+    <dependency>
+      <groupId>com.github.erosb</groupId>
+      <artifactId>everit-json-schema</artifactId>
+      <version>${everit-json-schema.version}</version>
     </dependency>
 
     <!-- Argon2id support (required by Spring Security Argon2PasswordEncoder) -->
