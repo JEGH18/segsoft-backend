@@ -80,13 +80,19 @@ public class AnalysisSnapshotService {
 
     @Transactional(readOnly = true)
     public AnalysisSnapshotDto getSnapshot(UUID analysisId) {
-        AnalysisSnapshot snapshot = analysisSnapshotRepository.findByAnalysisId(analysisId)
+        return findSnapshot(analysisId)
                 .orElseThrow(() -> new IllegalStateException("Snapshot no encontrado para el análisis"));
-        try {
-            return objectMapper.readValue(snapshot.getSnapshotJson(), AnalysisSnapshotDto.class);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Snapshot inválido para el análisis", e);
-        }
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<AnalysisSnapshotDto> findSnapshot(UUID analysisId) {
+        return analysisSnapshotRepository.findByAnalysisId(analysisId).map(snapshot -> {
+            try {
+                return objectMapper.readValue(snapshot.getSnapshotJson(), AnalysisSnapshotDto.class);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Snapshot inválido para el análisis", e);
+            }
+        });
     }
 
     private String serialize(AnalysisSnapshotDto snapshotDto) {

@@ -22,10 +22,15 @@ public record ReportContent(
         Summary summary,
         List<CategoryCoverage> categoryCoverage,
         List<PolicyEntry> policyResults,
-        List<FindingEntry> findings
+        List<FindingEntry> findings,
+        /*
+         * Rules executed by the analysis (schema v2). Null in reports frozen
+         * with schema v1, whose exporters derive them from the findings.
+         */
+        List<RuleEntry> rules
 ) {
 
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 
     public record Metadata(
             UUID analysisId,
@@ -97,6 +102,18 @@ public record ReportContent(
             String evidenceSnippet,
             String suggestedAction,
             String fileSha256
+    ) {
+    }
+
+    public record RuleEntry(
+            UUID ruleId,
+            UUID policyId,
+            String policyName,
+            String type,
+            String severity,
+            String category,
+            String cweId,
+            String description
     ) {
     }
 }
