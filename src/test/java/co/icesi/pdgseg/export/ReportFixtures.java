@@ -8,6 +8,7 @@ import co.icesi.pdgseg.dto.report.ReportContent.PolicyEntry;
 import co.icesi.pdgseg.dto.report.ReportContent.RuleEntry;
 import co.icesi.pdgseg.dto.report.ReportContent.Summary;
 import co.icesi.pdgseg.dto.report.ReportDocument;
+import co.icesi.pdgseg.service.ReportGeneratorService;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -105,7 +106,7 @@ public final class ReportFixtures {
         );
 
         // Schema v1 (no rule list), as frozen before the SARIF export existed.
-        ReportContent content = new ReportContent(1, metadata, summary, coverage, policies, findings, null);
+        ReportContent content = new ReportContent(1, metadata, summary, coverage, policies, findings, null, null, null);
         return new ReportDocument(UUID.fromString("0f8f7c1e-4c1a-4f3e-9d7a-2b6c1d0e9a11"), "GENERATED",
                 CHECKSUM, started.plusMinutes(5), content);
     }
@@ -117,7 +118,7 @@ public final class ReportFixtures {
                 Map.of("CRITICAL", 0, "HIGH", 0, "MEDIUM", 0, "LOW", 0), 0);
         return new ReportDocument(base.reportId(), base.status(), base.checksum(), base.generatedAt(),
                 new ReportContent(content.schemaVersion(), content.metadata(), summary, List.of(), List.of(), List.of(),
-                        List.of()));
+                        List.of(), List.of(), List.of()));
     }
 
     // ---- SARIF ------------------------------------------------------------------------
@@ -187,7 +188,9 @@ public final class ReportFixtures {
         Metadata metadata = legacy.metadata();
         Summary summary = new Summary(new BigDecimal("16.67"), new BigDecimal("12.50"), 6, 1, 5, 0, 5, bySeverity, 0);
         ReportContent content = new ReportContent(ReportContent.CURRENT_SCHEMA_VERSION, metadata, summary,
-                legacy.categoryCoverage(), legacy.policyResults(), findings, rules);
+                legacy.categoryCoverage(), legacy.policyResults(), findings, rules,
+                ReportGeneratorService.frameworkCoverage(legacy.policyResults(), findings),
+                ReportGeneratorService.recommendations(legacy.policyResults(), findings));
         return new ReportDocument(base.reportId(), base.status(), base.checksum(), base.generatedAt(), content);
     }
 

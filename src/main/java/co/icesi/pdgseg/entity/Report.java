@@ -2,17 +2,24 @@ package co.icesi.pdgseg.entity;
 
 import co.icesi.pdgseg.entity.enums.ReportStatus;
 import jakarta.persistence.*;
+import org.hibernate.annotations.Immutable;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Frozen compliance report. contentJson is the exact serialized
- * {@link co.icesi.pdgseg.dto.report.ReportContent} the checksum was computed
- * over -- it is never re-serialized, so any byte-level change to it is
- * detected at export time.
+ * Frozen compliance report: append-only. The entity is @Immutable (Hibernate
+ * never issues UPDATEs for it) and trigger trg_reports_append_only (V33)
+ * rejects UPDATE/DELETE in the database for any client.
+ *
+ * content is the serialized {@link co.icesi.pdgseg.dto.report.ReportContent}
+ * stored as JSONB; checksum is its {@link co.icesi.pdgseg.service.ReportChecksum},
+ * recomputed on every read to detect manipulation of the column.
  */
 @Entity
+@Immutable
 @Table(name = "reports")
 public class Report {
 
@@ -28,8 +35,9 @@ public class Report {
     @Column(nullable = false, length = 20)
     private ReportStatus status;
 
-    @Column(name = "content_json", nullable = false, columnDefinition = "text")
-    private String contentJson;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false, columnDefinition = "jsonb")
+    private String content;
 
     @Column(nullable = false, length = 64)
     private String checksum;
@@ -72,12 +80,12 @@ public class Report {
         this.status = status;
     }
 
-    public String getContentJson() {
-        return contentJson;
+    public String getContent() {
+        return content;
     }
 
-    public void setContentJson(String contentJson) {
-        this.contentJson = contentJson;
+    public void setContent(String content) {
+        this.content = content;
     }
 
     public String getChecksum() {

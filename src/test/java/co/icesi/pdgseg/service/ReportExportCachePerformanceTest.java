@@ -63,9 +63,10 @@ class ReportExportCachePerformanceTest {
         ReportExporterRegistry registry = new ReportExporterRegistry(List.of(
                 new PdfReportExporter(sanitizer, "America/Bogota"),
                 new SarifReportExporter(sanitizer, new SarifSchemaValidator(), "0.1.0", "https://example.org")));
-        ReportService service = new ReportService(repository, null, null, null, null, null, null,
-                new SecretMaskingService(), registry, new ExportFileCache(cacheDir.toString(), Duration.ofHours(1)),
-                new ExportSizeLimit(50), mock(AuditService.class), objectMapper);
+        ReportService service = new ReportService(repository, null, null, null,
+                new StructuredReportMapper(new SecretMaskingService()), registry,
+                new ExportFileCache(cacheDir.toString(), Duration.ofHours(1)), new ExportSizeLimit(50),
+                mock(AuditService.class), objectMapper);
 
         long missStart = System.nanoTime();
         ExportedReport miss = service.export(reportId, format, "auditor");
@@ -106,14 +107,15 @@ class ReportExportCachePerformanceTest {
                     f.evidenceSnippet(), f.suggestedAction(), f.fileSha256()));
         }
         ReportContent content = new ReportContent(base.schemaVersion(), base.metadata(), base.summary(),
-                base.categoryCoverage(), base.policyResults(), findings, base.rules());
+                base.categoryCoverage(), base.policyResults(), findings, base.rules(), base.frameworkCoverage(),
+                base.recommendations());
         String json = objectMapper.writeValueAsString(content);
 
         Report report = new Report();
         report.setId(reportId);
         report.setStatus(ReportStatus.GENERATED);
-        report.setContentJson(json);
-        report.setChecksum(ReportService.sha256Hex(json));
+        report.setContent(json);
+        report.setChecksum(ReportChecksum.of(json));
         report.setGeneratedAt(OffsetDateTime.now());
         return report;
     }

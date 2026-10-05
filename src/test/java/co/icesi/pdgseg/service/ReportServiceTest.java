@@ -96,10 +96,13 @@ class ReportServiceTest {
 
     /** Real filesystem export cache in a per-test temp directory. */
     private ReportService newService(List<ReportExporter> exporters, long maxExportSizeMb) {
-        return new ReportService(reportRepository, analysisRepository, policyResultRepository, ruleRepository,
-                userRepository, analysisService, analysisSnapshotService, new SecretMaskingService(),
-                new ReportExporterRegistry(exporters), new ExportFileCache(cacheDir.toString(), Duration.ofHours(1)),
-                new ExportSizeLimit(maxExportSizeMb), auditService, objectMapper);
+        SecretMaskingService masking = new SecretMaskingService();
+        ReportGeneratorService generator = new ReportGeneratorService(analysisService, policyResultRepository,
+                ruleRepository, analysisSnapshotService, masking);
+        return new ReportService(reportRepository, analysisRepository, userRepository, generator,
+                new StructuredReportMapper(masking), new ReportExporterRegistry(exporters),
+                new ExportFileCache(cacheDir.toString(), Duration.ofHours(1)), new ExportSizeLimit(maxExportSizeMb),
+                auditService, objectMapper);
     }
 
     // ---- generate --------------------------------------------------------------------
@@ -120,7 +123,7 @@ class ReportServiceTest {
 
         assertThatThrownBy(() -> service.generate(analysisId, "auditor"))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("COMPLETED");
+                .hasMessage("Solo se pueden generar reportes de análisis completados (estado actual: RUNNING)");
         verify(reportRepository, never()).save(any());
     }
 
@@ -141,16 +144,16 @@ class ReportServiceTest {
         assertThat(report.getStatus()).isEqualTo(ReportStatus.GENERATED);
         assertThat(report.getChecksum())
                 .hasSize(64)
-                .isEqualTo(ReportService.sha256Hex(report.getContentJson()));
+                .isEqualTo(ReportChecksum.of(report.getContent()));
         assertThat(response.checksum()).isEqualTo(report.getChecksum());
         assertThat(response.id()).isEqualTo(reportId);
 
-        assertThat(report.getContentJson())
+        assertThat(report.getContent())
                 .doesNotContain("live_raw_secret_123")
                 .doesNotContain("t0ps3cret")
                 .contains("api_key=*****");
 
-        ReportContent content = objectMapper.readValue(report.getContentJson(), ReportContent.class);
+        ReportContent content = objectMapper.readValue(report.getContent(), ReportContent.class);
         assertThat(content.categoryCoverage()).extracting(ReportContent.CategoryCoverage::category)
                 .containsExactly("SQL_INJECTION", "XSS", "AUTHENTICATION_FAILURE", "INSECURE_DATA_HANDLING",
                         "DEPENDENCY_VULNERABILITY");
@@ -184,8 +187,8 @@ class ReportServiceTest {
 
         ArgumentCaptor<Report> saved = ArgumentCaptor.forClass(Report.class);
         verify(reportRepository).save(saved.capture());
-        ReportContent content = objectMapper.readValue(saved.getValue().getContentJson(), ReportContent.class);
-        assertThat(content.schemaVersion()).isEqualTo(2);
+        ReportContent content = objectMapper.readValue(saved.getValue().getContent(), ReportContent.class);
+        assertThat(content.schemaVersion()).isEqualTo(ReportContent.CURRENT_SCHEMA_VERSION);
         assertThat(content.rules()).singleElement().satisfies(entry -> {
             assertThat(entry.ruleId()).isEqualTo(ruleId);
             assertThat(entry.policyName()).isEqualTo("Consultas parametrizadas");
@@ -209,7 +212,7 @@ class ReportServiceTest {
 
         ArgumentCaptor<Report> saved = ArgumentCaptor.forClass(Report.class);
         verify(reportRepository).save(saved.capture());
-        assertThat(objectMapper.readValue(saved.getValue().getContentJson(), ReportContent.class).rules()).isEmpty();
+        assertThat(objectMapper.readValue(saved.getValue().getContent(), ReportContent.class).rules()).isEmpty();
     }
 
     // ---- export ------------------------------------------------------------------------
@@ -247,7 +250,7 @@ class ReportServiceTest {
     @Test
     void export_tamperedContent_isRejectedAndNoFileIsGenerated() throws Exception {
         Report report = storedReport();
-        report.setContentJson(report.getContentJson().replace("\"totalFindings\":0", "\"totalFindings\":99"));
+        report.setContent(report.getContent().replace("\"totalFindings\":0", "\"totalFindings\":99"));
         when(reportRepository.findById(reportId)).thenReturn(Optional.of(report));
 
         assertThatThrownBy(() -> service.export(reportId, "pdf", "auditor"))
@@ -314,7 +317,7 @@ class ReportServiceTest {
         when(pdfExporter.export(any())).thenReturn(new byte[]{'%', 'P', 'D', 'F'});
         service.export(reportId, "pdf", "auditor");
 
-        report.setContentJson(report.getContentJson().replace("\"totalFindings\":0", "\"totalFindings\":7"));
+        report.setContent(report.getContent().replace("\"totalFindings\":0", "\"totalFindings\":7"));
 
         assertThatThrownBy(() -> service.export(reportId, "pdf", "auditor"))
                 .isInstanceOf(ReportIntegrityException.class);
@@ -327,9 +330,9 @@ class ReportServiceTest {
         when(pdfExporter.export(any())).thenReturn(new byte[]{1}, new byte[]{2});
         service.export(reportId, "pdf", "auditor");
 
-        String changed = report.getContentJson().replace("\"acme-app\"", "\"acme-app-v2\"");
-        report.setContentJson(changed);
-        report.setChecksum(ReportService.sha256Hex(changed));
+        String changed = report.getContent().replace("\"acme-app\"", "\"acme-app-v2\"");
+        report.setContent(changed);
+        report.setChecksum(ReportChecksum.of(changed));
         ExportedReport after = service.export(reportId, "pdf", "auditor");
 
         assertThat(after.cacheHit()).isFalse();
@@ -372,32 +375,62 @@ class ReportServiceTest {
     // ---- read ---------------------------------------------------------------------------
 
     @Test
-    void get_returnsTheSummaryTheReportViewShows() throws Exception {
+    void get_returnsTheStructuredReportAfterVerifyingItsChecksum() throws Exception {
         when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
 
-        var summary = service.get(reportId);
+        var report = service.get(reportId, ReportView.TECHNICAL, "auditor");
 
-        assertThat(summary.id()).isEqualTo(reportId);
-        assertThat(summary.status()).isEqualTo(ReportStatus.GENERATED);
-        assertThat(summary.repositoryName()).isEqualTo("acme-app");
-        assertThat(summary.generatedBy()).isEqualTo("auditor");
-        assertThat(summary.integrityVerified()).isTrue();
-        assertThat(summary.exportFormats()).containsExactly("pdf");
+        assertThat(report.id()).isEqualTo(reportId);
+        assertThat(report.status()).isEqualTo(ReportStatus.GENERATED);
+        assertThat(report.view()).isEqualTo("technical");
+        assertThat(report.metadata().repoName()).isEqualTo("acme-app");
+        assertThat(report.metadata().generatedBy()).isEqualTo("auditor");
+        assertThat(report.integrityVerified()).isTrue();
+        assertThat(report.exportFormats()).containsExactly("pdf");
     }
 
     @Test
-    void get_flagsATamperedReport() throws Exception {
+    void get_aTamperedReportIsRefusedAndAudited() throws Exception {
         Report report = storedReport();
-        report.setChecksum("0".repeat(64));
+        report.setContent(report.getContent().replace("\"acme-app\"", "\"otro-repo\""));
         when(reportRepository.findById(reportId)).thenReturn(Optional.of(report));
 
-        assertThat(service.get(reportId).integrityVerified()).isFalse();
+        assertThatThrownBy(() -> service.get(reportId, ReportView.TECHNICAL, "auditor"))
+                .isInstanceOf(ReportIntegrityException.class);
+        verify(auditService).record(eq("REPORT_INTEGRITY_VIOLATION"), eq("auditor"), isNull(), anyMap());
+    }
+
+    @Test
+    void list_flagsATamperedReportWithoutHidingIt() throws Exception {
+        Report tampered = storedReport();
+        tampered.setChecksum("0".repeat(64));
+        when(reportRepository.findAllByOrderByGeneratedAtDesc(any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(tampered)));
+
+        var page = service.list(null, null, org.springframework.data.domain.PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).singleElement().satisfies(summary -> {
+            assertThat(summary.integrityVerified()).isFalse();
+            assertThat(summary.repositoryName()).isEqualTo("acme-app");
+        });
+    }
+
+    @Test
+    void list_filtersTheHistoryByRepository() throws Exception {
+        UUID repositoryId = UUID.randomUUID();
+        when(reportRepository.findByRepositoryId(eq(repositoryId.toString()), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(storedReport())));
+
+        assertThat(service.list(repositoryId, null, org.springframework.data.domain.PageRequest.of(0, 20))
+                .getTotalElements()).isEqualTo(1);
+        verify(reportRepository, never()).findAllByOrderByGeneratedAtDesc(any());
     }
 
     @Test
     void get_unknownReport_throwsNotFound() {
         when(reportRepository.findById(reportId)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.get(reportId)).isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> service.get(reportId, ReportView.TECHNICAL, "auditor"))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     // ---- Fixtures ----------------------------------------------------------------------
@@ -467,14 +500,14 @@ class ReportServiceTest {
                 new ReportContent.Metadata(analysisId, null, "acme-app", "ZIP", null, null, null,
                         null, null, 0, 0, "auditor", OffsetDateTime.now()),
                 new ReportContent.Summary(BigDecimal.ZERO, BigDecimal.ZERO, 0, 0, 0, 0, 0, Map.of(), 0),
-                List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         String json = objectMapper.writeValueAsString(content);
 
         Report report = new Report();
         report.setId(reportId);
         report.setStatus(ReportStatus.GENERATED);
-        report.setContentJson(json);
-        report.setChecksum(ReportService.sha256Hex(json));
+        report.setContent(json);
+        report.setChecksum(ReportChecksum.of(json));
         report.setGeneratedAt(OffsetDateTime.now());
         return report;
     }

@@ -209,7 +209,7 @@ class ReportExportIntegrationTest extends PostgreSQLContainerBase {
         mockMvc.perform(get("/api/v1/reports/{id}", reportId).header("Authorization", "Bearer " + auditorToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("GENERATED"))
-                .andExpect(jsonPath("$.repositoryName").value("report-it.zip"))
+                .andExpect(jsonPath("$.metadata.repoName").value("report-it.zip"))
                 .andExpect(jsonPath("$.integrityVerified").value(true));
         mockMvc.perform(get("/api/v1/reports").param("analysisId", analysisId.toString())
                         .header("Authorization", "Bearer " + auditorToken))
@@ -249,8 +249,15 @@ class ReportExportIntegrationTest extends PostgreSQLContainerBase {
     @Test
     void tamperedReport_returns409AndNoFile() throws Exception {
         UUID reportId = generateReport();
-        jdbcTemplate.update("UPDATE reports SET content_json = replace(content_json, 'CRITICAL', 'LOW') WHERE id = ?",
-                reportId);
+        // reports is append-only (trigger V33): simulate a direct manipulation by
+        // someone able to disable the trigger; the checksum must still catch it.
+        jdbcTemplate.execute("ALTER TABLE reports DISABLE TRIGGER trg_reports_append_only");
+        try {
+            jdbcTemplate.update("UPDATE reports SET content = replace(content::text, 'CRITICAL', 'LOW')::jsonb WHERE id = ?",
+                    reportId);
+        } finally {
+            jdbcTemplate.execute("ALTER TABLE reports ENABLE TRIGGER trg_reports_append_only");
+        }
 
         mockMvc.perform(get("/api/v1/reports/{id}/export", reportId)
                         .param("format", "pdf")
@@ -271,10 +278,8 @@ class ReportExportIntegrationTest extends PostgreSQLContainerBase {
     }
 
     private UUID generateReport() throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/v1/reports")
-                        .header("Authorization", "Bearer " + auditorToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"analysisId\":\"" + analysisId + "\"}"))
+        MvcResult result = mockMvc.perform(post("/api/v1/analyses/{id}/reports", analysisId)
+                        .header("Authorization", "Bearer " + auditorToken))
                 .andExpect(status().isCreated())
                 .andReturn();
         Map<?, ?> body = objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
