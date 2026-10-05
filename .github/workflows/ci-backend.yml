@@ -1,0 +1,56 @@
+# CI de los reportes de cumplimiento (generación, contrato JSON Schema,
+# integridad, exportación PDF/SARIF y caché).
+#
+# Solo corre las suites de reportes: el `mvn test` completo arrastra 25 fallos
+# previos y ajenos a esta funcionalidad (PolicyControllerTest,
+# PolicyControllerSearchTest, RuleControllerTest y AuthServiceTest), que
+# dejarían el pipeline siempre en rojo. Cuando se corrijan, este workflow puede
+# pasar a `mvn verify -Pintegration-tests`.
+name: CI Backend - Reportes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  UNIT_TESTS: >-
+    ReportChecksumTest,StructuredReportSchemaTest,ReportGeneratorServiceTest,ReportServiceTest,
+    ReportControllerTest,AnalysisReportControllerTest,ReportExportCachePerformanceTest,
+    PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,
+    ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest
+  INTEGRATION_TESTS: StructuredReportIntegrationTest,ReportExportIntegrationTest
+
+jobs:
+  reports:
+    name: Reportes (unitarios, contrato y PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: pdgseg_test
+          POSTGRES_USER: pdgseg_test
+          POSTGRES_PASSWORD: pdgseg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pdgseg_test -d pdgseg_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Tests unitarios y validación del JSON Schema del reporte
+        run: mvn -B test -Dtest="$(echo $UNIT_TESTS | tr -d ' ')" -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Tests de integración contra PostgreSQL (append-only, inmutabilidad, integridad)
+        run: mvn -B test -Pintegration-tests -Dtest="$INTEGRATION_TESTS" -Dsurefire.failIfNoSpecifiedTests=false

@@ -27,10 +27,14 @@ public record ReportContent(
          * Rules executed by the analysis (schema v2). Null in reports frozen
          * with schema v1, whose exporters derive them from the findings.
          */
-        List<RuleEntry> rules
+        List<RuleEntry> rules,
+        /* Schema v3: coverage per regulatory framework. Null in older reports. */
+        List<FrameworkCoverage> frameworkCoverage,
+        /* Schema v3: prioritized remediation actions. Null in older reports. */
+        List<Recommendation> recommendations
 ) {
 
-    public static final int CURRENT_SCHEMA_VERSION = 2;
+    public static final int CURRENT_SCHEMA_VERSION = 3;
 
     public record Metadata(
             UUID analysisId,
@@ -114,6 +118,40 @@ public record ReportContent(
             String category,
             String cweId,
             String description
+    ) {
+    }
+
+    /** Evaluated policies grouped by the framework they trace to (ISO 27001, OWASP...). */
+    public record FrameworkCoverage(
+            String framework,
+            int policiesEvaluated,
+            int compliantPolicies,
+            int nonCompliantPolicies,
+            int requiresReviewPolicies,
+            int findings,
+            int highOrCriticalFindings,
+            List<ControlEntry> controls
+    ) {
+    }
+
+    /** A framework control and the worst status among the policies that implement it. */
+    public record ControlEntry(
+            String controlId,
+            String status,
+            List<UUID> policyIds
+    ) {
+    }
+
+    public record Recommendation(
+            int priority,
+            UUID policyId,
+            String policyName,
+            String category,
+            String status,
+            String highestSeverity,
+            int findings,
+            int highOrCriticalFindings,
+            String action
     ) {
     }
 }

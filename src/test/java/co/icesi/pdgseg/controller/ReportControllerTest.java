@@ -4,6 +4,12 @@ import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.report.ExportedReport;
 import co.icesi.pdgseg.dto.response.ReportResponse;
 import co.icesi.pdgseg.dto.response.ReportSummaryResponse;
+import co.icesi.pdgseg.dto.response.StructuredReportResponse;
+import co.icesi.pdgseg.entity.Report;
+import co.icesi.pdgseg.export.ReportFixtures;
+import co.icesi.pdgseg.service.ReportView;
+import co.icesi.pdgseg.service.SecretMaskingService;
+import co.icesi.pdgseg.service.StructuredReportMapper;
 import co.icesi.pdgseg.entity.enums.ReportStatus;
 import co.icesi.pdgseg.exception.ExportTooLargeException;
 import co.icesi.pdgseg.exception.ReportIntegrityException;
@@ -211,25 +217,78 @@ class ReportControllerTest {
                 23, 2, java.util.Map.of("MEDIUM", 2), true, List.of("pdf", "sarif"));
     }
 
+    private StructuredReportResponse structured(ReportView view) {
+        Report report = new Report();
+        report.setId(reportId);
+        report.setStatus(ReportStatus.GENERATED);
+        report.setChecksum("a".repeat(64));
+        report.setGeneratedAt(OffsetDateTime.now());
+        return new StructuredReportMapper(new SecretMaskingService())
+                .toResponse(report, ReportFixtures.documentForSarif().content(), view, List.of("pdf", "sarif"));
+    }
+
     @Test
     @WithMockUser(username = "auditor", roles = "AUDITOR")
-    void get_returnsTheReportSummary() throws Exception {
-        when(reportService.get(reportId)).thenReturn(summary());
+    void get_returnsTheStructuredReportWithEverySection() throws Exception {
+        when(reportService.get(reportId, ReportView.TECHNICAL, "auditor")).thenReturn(structured(ReportView.TECHNICAL));
 
         mockMvc.perform(get("/api/v1/reports/{id}", reportId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("GENERATED"))
-                .andExpect(jsonPath("$.repositoryName").value("acme-app"))
-                .andExpect(jsonPath("$.integrityVerified").value(true))
-                .andExpect(jsonPath("$.exportFormats[1]").value("sarif"));
+                .andExpect(jsonPath("$.view").value("technical"))
+                .andExpect(jsonPath("$.metadata.reportId").value(reportId.toString()))
+                .andExpect(jsonPath("$.metadata.repoName").value("acme-payments"))
+                .andExpect(jsonPath("$.executiveSummary.compliancePercentage").exists())
+                .andExpect(jsonPath("$.policyResults").isArray())
+                .andExpect(jsonPath("$.findingsBySeverity.CRITICAL.count").value(1))
+                .andExpect(jsonPath("$.findingsBySeverity.CRITICAL.findings").isArray())
+                .andExpect(jsonPath("$.claudeCodeSecurityCoverage.length()").value(5))
+                .andExpect(jsonPath("$.frameworkCoverage").isArray())
+                .andExpect(jsonPath("$.traceabilityReference.self").value("/api/v1/reports/" + reportId));
+    }
+
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void get_executiveView_omitsTechnicalDetail() throws Exception {
+        when(reportService.get(reportId, ReportView.EXECUTIVE, "auditor")).thenReturn(structured(ReportView.EXECUTIVE));
+
+        mockMvc.perform(get("/api/v1/reports/{id}", reportId).param("view", "executive"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.view").value("executive"))
+                .andExpect(jsonPath("$.policyResults").doesNotExist())
+                .andExpect(jsonPath("$.findingsBySeverity.CRITICAL.count").value(1))
+                .andExpect(jsonPath("$.findingsBySeverity.CRITICAL.findings").doesNotExist())
+                .andExpect(jsonPath("$.executiveSummary.recommendations").isArray())
+                .andExpect(jsonPath("$.claudeCodeSecurityCoverage.length()").value(5));
+    }
+
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void get_unknownView_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/reports/{id}", reportId).param("view", "resumen"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("technical, executive")));
+    }
+
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void get_tamperedReport_returns409() throws Exception {
+        when(reportService.get(eq(reportId), any(), anyString()))
+                .thenThrow(new ReportIntegrityException("checksum no coincide"));
+
+        mockMvc.perform(get("/api/v1/reports/{id}", reportId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("REPORT_INTEGRITY_ERROR"));
     }
 
     @Test
     @WithMockUser(username = "admin", roles = "SECURITY_ADMIN")
     void list_returnsAPageOfReports() throws Exception {
-        when(reportService.list(eq(null), any())).thenReturn(new PageImpl<>(List.of(summary()), PageRequest.of(0, 20), 1));
+        UUID repositoryId = UUID.randomUUID();
+        when(reportService.list(eq(repositoryId), eq(null), any()))
+                .thenReturn(new PageImpl<>(List.of(summary()), PageRequest.of(0, 20), 1));
 
-        mockMvc.perform(get("/api/v1/reports"))
+        mockMvc.perform(get("/api/v1/reports").param("repositoryId", repositoryId.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].id").value(reportId.toString()))
                 .andExpect(jsonPath("$.totalElements").value(1));
@@ -240,6 +299,16 @@ class ReportControllerTest {
     void reportView_isNotAvailableToDevelopers() throws Exception {
         mockMvc.perform(get("/api/v1/reports/{id}", reportId)).andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/reports")).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void theFormerGenerationEndpointAnswers405() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/reports")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.errorCode").value("METHOD_NOT_ALLOWED"))
+                .andExpect(header().string("Allow", containsString("GET")));
     }
 
     // ---- Roles ---------------------------------------------------------------------------
@@ -257,52 +326,5 @@ class ReportControllerTest {
         mockMvc.perform(get("/api/v1/reports/{id}/export", reportId).param("format", "pdf"))
                 .andExpect(status().isUnauthorized());
         verify(reportService, never()).export(any(), any(), any());
-    }
-
-    // ---- Generation ---------------------------------------------------------------------
-
-    @Test
-    @WithMockUser(username = "auditor", roles = "AUDITOR")
-    void generate_asAuditor_returns201() throws Exception {
-        UUID analysisId = UUID.randomUUID();
-        when(reportService.generate(analysisId, "auditor")).thenReturn(new ReportResponse(
-                reportId, analysisId, ReportStatus.GENERATED, "a".repeat(64), OffsetDateTime.now()));
-
-        mockMvc.perform(post("/api/v1/reports")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"analysisId\":\"" + analysisId + "\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").value(reportId.toString()))
-                .andExpect(jsonPath("$.status").value("GENERATED"));
-    }
-
-    @Test
-    @WithMockUser(username = "auditor", roles = "AUDITOR")
-    void generate_withoutAnalysisId_returns400() throws Exception {
-        mockMvc.perform(post("/api/v1/reports").contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    @WithMockUser(username = "auditor", roles = "AUDITOR")
-    void generate_analysisNotCompleted_returns422() throws Exception {
-        UUID analysisId = UUID.randomUUID();
-        when(reportService.generate(analysisId, "auditor"))
-                .thenThrow(new UnprocessableEntityException("Solo análisis COMPLETED"));
-
-        mockMvc.perform(post("/api/v1/reports")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"analysisId\":\"" + analysisId + "\"}"))
-                .andExpect(status().isUnprocessableEntity());
-    }
-
-    @Test
-    @WithMockUser(username = "dev", roles = "DEVELOPER")
-    void generate_asDeveloper_returns403() throws Exception {
-        mockMvc.perform(post("/api/v1/reports")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"analysisId\":\"" + UUID.randomUUID() + "\"}"))
-                .andExpect(status().isForbidden());
-        verify(reportService, never()).generate(any(), any());
     }
 }

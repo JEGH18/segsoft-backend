@@ -1,0 +1,236 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JEGH18/segsoft-backend/schemas/structured-report.schema.json",
+  "title": "Reporte estructurado de cumplimiento de SegSoft (GET /api/v1/reports/{id})",
+  "type": "object",
+  "required": ["id", "status", "view", "schemaVersion", "checksum", "integrityVerified", "exportFormats",
+               "metadata", "executiveSummary", "findingsBySeverity", "claudeCodeSecurityCoverage",
+               "frameworkCoverage", "traceabilityReference"],
+  "properties": {
+    "id": { "$ref": "#/definitions/uuid" },
+    "status": { "enum": ["GENERATED"] },
+    "view": { "enum": ["technical", "executive"] },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "integrityVerified": { "const": true },
+    "exportFormats": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "metadata": {
+      "type": "object",
+      "required": ["reportId", "analysisId", "generatedAt", "generatedBy", "repoName"],
+      "properties": {
+        "reportId": { "$ref": "#/definitions/uuid" },
+        "analysisId": { "$ref": "#/definitions/nullableUuid" },
+        "repositoryId": { "$ref": "#/definitions/nullableUuid" },
+        "repoName": { "type": ["string", "null"] },
+        "sourceType": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "generatedBy": { "type": ["string", "null"] },
+        "analysisStartedAt": { "type": ["string", "null"] },
+        "analysisCompletedAt": { "type": ["string", "null"] },
+        "rulesExecuted": { "type": "integer", "minimum": 0 },
+        "rulesTotal": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "executiveSummary": {
+      "type": "object",
+      "required": ["compliancePercentage", "totalPolicies", "compliantPolicies", "nonCompliantPolicies",
+                   "requiresReviewPolicies", "totalFindings", "highestSeverity", "recommendations"],
+      "properties": {
+        "compliancePercentage": { "$ref": "#/definitions/percentage" },
+        "weightedCompliancePercentage": { "$ref": "#/definitions/percentage" },
+        "totalPolicies": { "type": "integer", "minimum": 0 },
+        "compliantPolicies": { "type": "integer", "minimum": 0 },
+        "nonCompliantPolicies": { "type": "integer", "minimum": 0 },
+        "requiresReviewPolicies": { "type": "integer", "minimum": 0 },
+        "totalFindings": { "type": "integer", "minimum": 0 },
+        "highOrCriticalFindings": { "type": "integer", "minimum": 0 },
+        "highestSeverity": { "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", null] },
+        "ruleExecutionErrors": { "type": "integer", "minimum": 0 },
+        "recommendations": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": ["priority", "policyName", "status", "action"],
+            "properties": {
+              "priority": { "type": "integer", "minimum": 1 },
+              "policyId": { "$ref": "#/definitions/nullableUuid" },
+              "policyName": { "type": ["string", "null"] },
+              "category": { "type": ["string", "null"] },
+              "status": { "enum": ["NON_COMPLIANT", "REQUIRES_REVIEW"] },
+              "highestSeverity": { "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", null] },
+              "findings": { "type": "integer", "minimum": 0 },
+              "highOrCriticalFindings": { "type": "integer", "minimum": 0 },
+              "action": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "policyResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["policyId", "name", "status", "findingsCount"],
+        "properties": {
+          "policyId": { "$ref": "#/definitions/uuid" },
+          "name": { "type": ["string", "null"] },
+          "category": { "type": ["string", "null"] },
+          "framework": { "type": ["string", "null"] },
+          "controlId": { "type": ["string", "null"] },
+          "weight": { "type": ["integer", "null"] },
+          "status": { "$ref": "#/definitions/complianceStatus" },
+          "findingsCount": { "type": "integer", "minimum": 0 },
+          "highOrCriticalCount": { "type": "integer", "minimum": 0 },
+          "lowOrMediumCount": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "findingsBySeverity": {
+      "type": "object",
+      "required": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+      "additionalProperties": false,
+      "properties": {
+        "CRITICAL": { "$ref": "#/definitions/severityGroup" },
+        "HIGH": { "$ref": "#/definitions/severityGroup" },
+        "MEDIUM": { "$ref": "#/definitions/severityGroup" },
+        "LOW": { "$ref": "#/definitions/severityGroup" }
+      }
+    },
+    "claudeCodeSecurityCoverage": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["category", "policiesEvaluated", "compliantPolicies", "nonCompliantPolicies",
+                     "requiresReviewPolicies", "findings", "highOrCriticalFindings", "compliancePercentage"],
+        "properties": {
+          "category": { "enum": ["SQL_INJECTION", "XSS", "AUTHENTICATION_FAILURE", "INSECURE_DATA_HANDLING",
+                                 "DEPENDENCY_VULNERABILITY"] },
+          "policiesEvaluated": { "type": "integer", "minimum": 0 },
+          "compliantPolicies": { "type": "integer", "minimum": 0 },
+          "nonCompliantPolicies": { "type": "integer", "minimum": 0 },
+          "requiresReviewPolicies": { "type": "integer", "minimum": 0 },
+          "findings": { "type": "integer", "minimum": 0 },
+          "highOrCriticalFindings": { "type": "integer", "minimum": 0 },
+          "compliancePercentage": { "$ref": "#/definitions/nullablePercentage" }
+        }
+      }
+    },
+    "frameworkCoverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["framework", "policiesEvaluated", "compliantPolicies", "nonCompliantPolicies",
+                     "requiresReviewPolicies", "compliancePercentage"],
+        "properties": {
+          "framework": { "type": "string" },
+          "policiesEvaluated": { "type": "integer", "minimum": 1 },
+          "compliantPolicies": { "type": "integer", "minimum": 0 },
+          "nonCompliantPolicies": { "type": "integer", "minimum": 0 },
+          "requiresReviewPolicies": { "type": "integer", "minimum": 0 },
+          "findings": { "type": "integer", "minimum": 0 },
+          "highOrCriticalFindings": { "type": "integer", "minimum": 0 },
+          "compliancePercentage": { "$ref": "#/definitions/percentage" },
+          "controls": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["controlId", "status", "policyIds"],
+              "properties": {
+                "controlId": { "type": "string", "minLength": 1 },
+                "status": { "$ref": "#/definitions/complianceStatus" },
+                "policyIds": { "type": "array", "items": { "$ref": "#/definitions/uuid" }, "minItems": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "traceabilityReference": {
+      "type": "object",
+      "required": ["self", "executiveView", "technicalView", "findingDetailTemplate", "exports", "policies"],
+      "properties": {
+        "self": { "$ref": "#/definitions/apiPath" },
+        "executiveView": { "$ref": "#/definitions/apiPath" },
+        "technicalView": { "$ref": "#/definitions/apiPath" },
+        "repositoryHistory": { "$ref": "#/definitions/apiPath" },
+        "analysis": { "$ref": "#/definitions/apiPath" },
+        "analysisResults": { "$ref": "#/definitions/apiPath" },
+        "analysisFindings": { "$ref": "#/definitions/apiPath" },
+        "findingDetailTemplate": { "$ref": "#/definitions/apiPath" },
+        "exports": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/apiPath" }
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["policyId", "policy", "traceability"],
+            "properties": {
+              "policyId": { "$ref": "#/definitions/uuid" },
+              "policyName": { "type": ["string", "null"] },
+              "policy": { "$ref": "#/definitions/apiPath" },
+              "traceability": { "$ref": "#/definitions/apiPath" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "if": { "properties": { "view": { "const": "technical" } } },
+  "then": {
+    "required": ["policyResults"],
+    "properties": {
+      "findingsBySeverity": {
+        "additionalProperties": { "required": ["count", "findings"] }
+      }
+    }
+  },
+  "else": {
+    "not": { "required": ["policyResults"] },
+    "properties": {
+      "findingsBySeverity": {
+        "additionalProperties": { "not": { "required": ["findings"] } }
+      },
+      "frameworkCoverage": {
+        "items": { "not": { "required": ["controls"] } }
+      }
+    }
+  },
+  "definitions": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "nullableUuid": { "anyOf": [{ "$ref": "#/definitions/uuid" }, { "type": "null" }] },
+    "percentage": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "nullablePercentage": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "complianceStatus": { "enum": ["COMPLIANT", "NON_COMPLIANT", "REQUIRES_REVIEW"] },
+    "apiPath": { "type": "string", "pattern": "^/api/v1/" },
+    "severityGroup": {
+      "type": "object",
+      "required": ["count"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["severity", "category", "filePath"],
+            "properties": {
+              "findingId": { "$ref": "#/definitions/nullableUuid" },
+              "policyId": { "$ref": "#/definitions/nullableUuid" },
+              "ruleId": { "$ref": "#/definitions/nullableUuid" },
+              "severity": { "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"] },
+              "category": { "type": "string" },
+              "filePath": { "type": "string" },
+              "lineNumber": { "type": ["integer", "null"] },
+              "evidenceSnippet": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}
