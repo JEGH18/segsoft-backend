@@ -6,16 +6,20 @@ import co.icesi.pdgseg.dto.report.ReportContent.CategoryCoverage;
 import co.icesi.pdgseg.dto.report.ReportContent.FindingEntry;
 import co.icesi.pdgseg.dto.report.ReportContent.Metadata;
 import co.icesi.pdgseg.dto.report.ReportContent.PolicyEntry;
+import co.icesi.pdgseg.dto.report.ReportContent.RuleEntry;
 import co.icesi.pdgseg.dto.report.ReportContent.Summary;
 import co.icesi.pdgseg.dto.report.ReportDocument;
 import co.icesi.pdgseg.dto.response.AnalysisResultsResponse;
 import co.icesi.pdgseg.dto.response.FindingResponse;
 import co.icesi.pdgseg.dto.response.ReportResponse;
+import co.icesi.pdgseg.dto.snapshot.PolicySnapshotDto;
+import co.icesi.pdgseg.dto.snapshot.RuleSnapshotDto;
 import co.icesi.pdgseg.entity.Analysis;
 import co.icesi.pdgseg.entity.Policy;
 import co.icesi.pdgseg.entity.PolicyResult;
 import co.icesi.pdgseg.entity.Report;
 import co.icesi.pdgseg.entity.Repository;
+import co.icesi.pdgseg.entity.Rule;
 import co.icesi.pdgseg.entity.enums.AnalysisStatus;
 import co.icesi.pdgseg.entity.enums.Category;
 import co.icesi.pdgseg.entity.enums.PolicyComplianceStatus;
@@ -29,6 +33,7 @@ import co.icesi.pdgseg.export.ReportExporterRegistry;
 import co.icesi.pdgseg.repository.AnalysisRepository;
 import co.icesi.pdgseg.repository.PolicyResultRepository;
 import co.icesi.pdgseg.repository.ReportRepository;
+import co.icesi.pdgseg.repository.RuleRepository;
 import co.icesi.pdgseg.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,12 +46,15 @@ import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class ReportService {
@@ -54,8 +62,10 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final AnalysisRepository analysisRepository;
     private final PolicyResultRepository policyResultRepository;
+    private final RuleRepository ruleRepository;
     private final UserRepository userRepository;
     private final AnalysisService analysisService;
+    private final AnalysisSnapshotService analysisSnapshotService;
     private final SecretMaskingService secretMaskingService;
     private final ReportExporterRegistry exporterRegistry;
     private final AuditService auditService;
@@ -65,8 +75,10 @@ public class ReportService {
             ReportRepository reportRepository,
             AnalysisRepository analysisRepository,
             PolicyResultRepository policyResultRepository,
+            RuleRepository ruleRepository,
             UserRepository userRepository,
             AnalysisService analysisService,
+            AnalysisSnapshotService analysisSnapshotService,
             SecretMaskingService secretMaskingService,
             ReportExporterRegistry exporterRegistry,
             AuditService auditService,
@@ -75,8 +87,10 @@ public class ReportService {
         this.reportRepository = reportRepository;
         this.analysisRepository = analysisRepository;
         this.policyResultRepository = policyResultRepository;
+        this.ruleRepository = ruleRepository;
         this.userRepository = userRepository;
         this.analysisService = analysisService;
+        this.analysisSnapshotService = analysisSnapshotService;
         this.secretMaskingService = secretMaskingService;
         this.exporterRegistry = exporterRegistry;
         this.auditService = auditService;
@@ -205,7 +219,47 @@ public class ReportService {
         );
 
         return new ReportContent(ReportContent.CURRENT_SCHEMA_VERSION, metadata, summary,
-                categoryCoverage(policies, findings), policies, findings);
+                categoryCoverage(policies, findings), policies, findings, executedRules(analysis.getId()));
+    }
+
+    /**
+     * The rules the analysis actually ran, taken from its snapshot (the
+     * policy/rule set frozen when it started) rather than from the live
+     * catalog, which may have changed since. CWE ids are not part of the
+     * snapshot, so they are looked up on the rule rows.
+     */
+    private List<RuleEntry> executedRules(UUID analysisId) {
+        List<PolicySnapshotDto> policies = analysisSnapshotService.findSnapshot(analysisId)
+                .map(snapshot -> snapshot.policies() != null ? snapshot.policies() : List.<PolicySnapshotDto>of())
+                .orElse(List.of());
+        List<UUID> ruleIds = policies.stream()
+                .flatMap(policy -> policy.rules().stream())
+                .map(RuleSnapshotDto::ruleId)
+                .toList();
+        Map<UUID, Rule> rulesById = ruleRepository.findAllById(ruleIds).stream()
+                .collect(Collectors.toMap(Rule::getId, Function.identity()));
+
+        List<RuleEntry> rules = new ArrayList<>();
+        for (PolicySnapshotDto policy : policies) {
+            for (RuleSnapshotDto rule : policy.rules()) {
+                Rule entity = rulesById.get(rule.ruleId());
+                Object description = rule.payload() != null ? rule.payload().get("description") : null;
+                rules.add(new RuleEntry(
+                        rule.ruleId(),
+                        policy.policyId(),
+                        policy.name(),
+                        rule.type(),
+                        rule.severity(),
+                        rule.category() != null ? rule.category() : policy.category(),
+                        entity != null ? entity.getCweId() : null,
+                        description instanceof String text ? secretMaskingService.mask(text) : null
+                ));
+            }
+        }
+        rules.sort(Comparator.comparing((RuleEntry r) -> String.valueOf(r.category()))
+                .thenComparing(r -> String.valueOf(r.policyName()))
+                .thenComparing(r -> r.ruleId().toString()));
+        return rules;
     }
 
     private PolicyEntry toPolicyEntry(PolicyResult result) {

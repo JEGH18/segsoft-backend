@@ -7,10 +7,14 @@ import co.icesi.pdgseg.dto.response.AnalysisResponse;
 import co.icesi.pdgseg.dto.response.AnalysisResultsResponse;
 import co.icesi.pdgseg.dto.response.FindingResponse;
 import co.icesi.pdgseg.dto.response.ReportResponse;
+import co.icesi.pdgseg.dto.snapshot.AnalysisSnapshotDto;
+import co.icesi.pdgseg.dto.snapshot.PolicySnapshotDto;
+import co.icesi.pdgseg.dto.snapshot.RuleSnapshotDto;
 import co.icesi.pdgseg.entity.Analysis;
 import co.icesi.pdgseg.entity.Policy;
 import co.icesi.pdgseg.entity.PolicyResult;
 import co.icesi.pdgseg.entity.Report;
+import co.icesi.pdgseg.entity.Rule;
 import co.icesi.pdgseg.entity.Repository;
 import co.icesi.pdgseg.entity.enums.AnalysisStatus;
 import co.icesi.pdgseg.entity.enums.Category;
@@ -21,6 +25,7 @@ import co.icesi.pdgseg.entity.enums.SeverityLevel;
 import co.icesi.pdgseg.entity.enums.SourceType;
 import co.icesi.pdgseg.exception.ReportIntegrityException;
 import co.icesi.pdgseg.exception.ResourceNotFoundException;
+import co.icesi.pdgseg.exception.SarifValidationException;
 import co.icesi.pdgseg.exception.UnprocessableEntityException;
 import co.icesi.pdgseg.exception.UnsupportedExportFormatException;
 import co.icesi.pdgseg.export.ReportExporter;
@@ -28,6 +33,7 @@ import co.icesi.pdgseg.export.ReportExporterRegistry;
 import co.icesi.pdgseg.repository.AnalysisRepository;
 import co.icesi.pdgseg.repository.PolicyResultRepository;
 import co.icesi.pdgseg.repository.ReportRepository;
+import co.icesi.pdgseg.repository.RuleRepository;
 import co.icesi.pdgseg.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,6 +68,8 @@ class ReportServiceTest {
     @Mock PolicyResultRepository policyResultRepository;
     @Mock UserRepository userRepository;
     @Mock AnalysisService analysisService;
+    @Mock AnalysisSnapshotService analysisSnapshotService;
+    @Mock RuleRepository ruleRepository;
     @Mock AuditService auditService;
     @Mock ReportExporter pdfExporter;
 
@@ -76,9 +84,9 @@ class ReportServiceTest {
         lenient().when(pdfExporter.format()).thenReturn("pdf");
         lenient().when(pdfExporter.mediaType()).thenReturn(MediaType.APPLICATION_PDF);
         lenient().when(pdfExporter.fileExtension()).thenReturn("pdf");
-        service = new ReportService(reportRepository, analysisRepository, policyResultRepository, userRepository,
-                analysisService, new SecretMaskingService(), new ReportExporterRegistry(List.of(pdfExporter)),
-                auditService, objectMapper);
+        service = new ReportService(reportRepository, analysisRepository, policyResultRepository, ruleRepository,
+                userRepository, analysisService, analysisSnapshotService, new SecretMaskingService(),
+                new ReportExporterRegistry(List.of(pdfExporter)), auditService, objectMapper);
     }
 
     // ---- generate --------------------------------------------------------------------
@@ -140,7 +148,73 @@ class ReportServiceTest {
         verify(auditService).record(eq("REPORT_GENERATED"), eq("auditor"), isNull(), anyMap());
     }
 
+    @Test
+    void generate_freezesTheRulesTheAnalysisExecuted() throws Exception {
+        stubCompletedAnalysis("SELECT 1");
+        UUID policyId = UUID.randomUUID();
+        UUID ruleId = UUID.randomUUID();
+        when(analysisSnapshotService.findSnapshot(analysisId)).thenReturn(Optional.of(new AnalysisSnapshotDto(List.of(
+                new PolicySnapshotDto(policyId, "Consultas parametrizadas", "SQL_INJECTION", List.of(
+                        new RuleSnapshotDto(ruleId, "PATTERN_REGEX", "CRITICAL", "SQL_INJECTION",
+                                Map.of("pattern", "executeQuery", "description", "Concatenación en SQL token=abc123"))))))));
+        Rule rule = mock(Rule.class);
+        when(rule.getId()).thenReturn(ruleId);
+        when(rule.getCweId()).thenReturn("CWE-89");
+        when(ruleRepository.findAllById(List.of(ruleId))).thenReturn(List.of(rule));
+        when(reportRepository.save(any(Report.class))).thenAnswer(inv -> {
+            Report report = inv.getArgument(0);
+            report.setId(reportId);
+            return report;
+        });
+
+        service.generate(analysisId, "auditor");
+
+        ArgumentCaptor<Report> saved = ArgumentCaptor.forClass(Report.class);
+        verify(reportRepository).save(saved.capture());
+        ReportContent content = objectMapper.readValue(saved.getValue().getContentJson(), ReportContent.class);
+        assertThat(content.schemaVersion()).isEqualTo(2);
+        assertThat(content.rules()).singleElement().satisfies(entry -> {
+            assertThat(entry.ruleId()).isEqualTo(ruleId);
+            assertThat(entry.policyName()).isEqualTo("Consultas parametrizadas");
+            assertThat(entry.severity()).isEqualTo("CRITICAL");
+            assertThat(entry.cweId()).isEqualTo("CWE-89");
+            assertThat(entry.description()).isEqualTo("Concatenación en SQL token=*****");
+        });
+    }
+
+    @Test
+    void generate_withoutSnapshot_storesAnEmptyRuleList() throws Exception {
+        stubCompletedAnalysis("SELECT 1");
+        when(analysisSnapshotService.findSnapshot(analysisId)).thenReturn(Optional.empty());
+        when(reportRepository.save(any(Report.class))).thenAnswer(inv -> {
+            Report report = inv.getArgument(0);
+            report.setId(reportId);
+            return report;
+        });
+
+        service.generate(analysisId, "auditor");
+
+        ArgumentCaptor<Report> saved = ArgumentCaptor.forClass(Report.class);
+        verify(reportRepository).save(saved.capture());
+        assertThat(objectMapper.readValue(saved.getValue().getContentJson(), ReportContent.class).rules()).isEmpty();
+    }
+
     // ---- export ------------------------------------------------------------------------
+
+    @Test
+    void export_invalidSarif_propagatesAndIsNotAuditedAsExported() throws Exception {
+        ReportExporter sarifExporter = mock(ReportExporter.class);
+        when(sarifExporter.format()).thenReturn("sarif");
+        when(sarifExporter.export(any())).thenThrow(new SarifValidationException(List.of("#: forced")));
+        ReportService sarifService = new ReportService(reportRepository, analysisRepository, policyResultRepository,
+                ruleRepository, userRepository, analysisService, analysisSnapshotService, new SecretMaskingService(),
+                new ReportExporterRegistry(List.of(pdfExporter, sarifExporter)), auditService, objectMapper);
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
+
+        assertThatThrownBy(() -> sarifService.export(reportId, "sarif", "auditor"))
+                .isInstanceOf(SarifValidationException.class);
+        verify(auditService, never()).record(eq("REPORT_EXPORTED"), any(), any(), anyMap());
+    }
 
     @Test
     void export_unsupportedFormat_isRejectedBeforeTouchingTheReport() {
@@ -268,7 +342,7 @@ class ReportServiceTest {
                 new ReportContent.Metadata(analysisId, null, "acme-app", "ZIP", null, null, null,
                         null, null, 0, 0, "auditor", OffsetDateTime.now()),
                 new ReportContent.Summary(BigDecimal.ZERO, BigDecimal.ZERO, 0, 0, 0, 0, 0, Map.of(), 0),
-                List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of());
         String json = objectMapper.writeValueAsString(content);
 
         Report report = new Report();

@@ -56,6 +56,12 @@ sandbox:
 rule:
   timeout-ms: ${RULE_TIMEOUT_MS:30000}
 
+report:
+  sarif:
+    # Filled in by Maven resource filtering with the pom version.
+    tool-version: "@project.version@"
+    information-uri: ${SARIF_INFORMATION_URI:https://github.com/JEGH18/segsoft-backend}
+
 traceability:
   retention-days: ${TRACEABILITY_RETENTION_DAYS:365}
 

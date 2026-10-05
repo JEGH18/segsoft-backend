@@ -129,6 +129,19 @@ public class GlobalExceptionHandler {
         return response;
     }
 
+    /**
+     * The violations go to the log only: they describe the server's own
+     * output and are of no use to the client, who gets the traceId to report.
+     */
+    @ExceptionHandler(SarifValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleSarifValidation(SarifValidationException ex) {
+        log.error("SARIF inválido descartado, no se envió al cliente [traceId={}] violaciones={}",
+                traceId(), ex.getViolations());
+        return errorBody(HttpStatus.INTERNAL_SERVER_ERROR, "SARIF_VALIDATION_ERROR",
+                "El reporte SARIF generado no superó la validación contra el schema SARIF 2.1.0 y no se envió. "
+                        + "Reporte el traceId al administrador.");
+    }
+
     @ExceptionHandler(UnprocessableEntityException.class)
     public ResponseEntity<Map<String, Object>> handleUnprocessable(UnprocessableEntityException ex) {
         return errorBody(HttpStatus.UNPROCESSABLE_ENTITY, "UNPROCESSABLE_ENTITY", ex.getMessage());

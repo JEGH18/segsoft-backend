@@ -1,0 +1,44 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "PDG-SegSoft",
+          "version": "0.1.0",
+          "rules": [
+            {
+              "id": "11111111-0000-0000-0000-000000000001",
+              "name": "ConcatenacionDirectaDeCadenasEnQuerySql",
+              "helpUri": "https://cwe.mitre.org/data/definitions/89.html"
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "11111111-0000-0000-0000-000000000001",
+          "ruleIndex": 0,
+          "level": "critical",
+          "message": {
+            "text": "Concatenación directa de cadenas en query SQL."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/main/java/com/acme/UserDao.java",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 42
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

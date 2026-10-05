@@ -6,6 +6,7 @@ import co.icesi.pdgseg.dto.response.ReportResponse;
 import co.icesi.pdgseg.entity.enums.ReportStatus;
 import co.icesi.pdgseg.exception.ReportIntegrityException;
 import co.icesi.pdgseg.exception.ResourceNotFoundException;
+import co.icesi.pdgseg.exception.SarifValidationException;
 import co.icesi.pdgseg.exception.UnprocessableEntityException;
 import co.icesi.pdgseg.exception.UnsupportedExportFormatException;
 import co.icesi.pdgseg.security.JwtTokenProvider;
@@ -13,6 +14,9 @@ import co.icesi.pdgseg.security.UserDetailsServiceImpl;
 import co.icesi.pdgseg.service.AuditService;
 import co.icesi.pdgseg.service.ReportService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -25,7 +29,9 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -98,7 +104,22 @@ class ReportControllerTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_PDF));
     }
 
-    // ---- 400 / 404 / 409 ---------------------------------------------------------------
+    @Test
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void export_sarif_returnsSarifJsonAsAttachment() throws Exception {
+        byte[] sarif = "{\"version\":\"2.1.0\",\"runs\":[]}".getBytes();
+        when(reportService.export(eq(reportId), eq("sarif"), anyString())).thenReturn(new ExportedReport(
+                sarif, MediaType.valueOf("application/sarif+json"), "segsoft-report-" + reportId + ".sarif"));
+
+        mockMvc.perform(get("/api/v1/reports/{id}/export", reportId).param("format", "sarif"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/sarif+json"))
+                .andExpect(header().string("Content-Disposition",
+                        "attachment; filename=\"segsoft-report-" + reportId + ".sarif\""))
+                .andExpect(content().bytes(sarif));
+    }
+
+    // ---- 400 / 404 / 409 / 500 ---------------------------------------------------------
 
     @Test
     @WithMockUser(username = "auditor", roles = "AUDITOR")
@@ -135,6 +156,30 @@ class ReportControllerTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(header().doesNotExist("Content-Disposition"))
                 .andExpect(jsonPath("$.errorCode").value("REPORT_INTEGRITY_ERROR"));
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    @WithMockUser(username = "auditor", roles = "AUDITOR")
+    void export_invalidSarif_returns500WithTraceIdLogsItAndServesNoFile(CapturedOutput output) throws Exception {
+        when(reportService.export(eq(reportId), eq("sarif"), anyString()))
+                .thenThrow(new SarifValidationException(List.of("#/runs/0/results/0/level: critical is not a valid enum value")));
+
+        mockMvc.perform(get("/api/v1/reports/{id}/export", reportId)
+                        .param("format", "sarif")
+                        .header("X-Trace-Id", "trace-sarif-invalido"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(header().doesNotExist("Content-Disposition"))
+                .andExpect(jsonPath("$.errorCode").value("SARIF_VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.traceId").value("trace-sarif-invalido"))
+                // the violations are logged, never exposed to the client
+                .andExpect(content().string(not(containsString("enum value"))));
+
+        assertThat(output.getAll())
+                .contains("SARIF inválido descartado")
+                .contains("traceId=trace-sarif-invalido")
+                .contains("critical is not a valid enum value");
     }
 
     // ---- Roles ---------------------------------------------------------------------------
