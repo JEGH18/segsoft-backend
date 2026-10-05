@@ -142,6 +142,17 @@ public class GlobalExceptionHandler {
                         + "Reporte el traceId al administrador.");
     }
 
+    @ExceptionHandler(ExportTooLargeException.class)
+    public ResponseEntity<Map<String, Object>> handleExportTooLarge(ExportTooLargeException ex) {
+        log.warn("Exportación rechazada por tamaño [traceId={}] bytes={} maxMb={}",
+                traceId(), ex.getSizeBytes(), ex.getMaxSizeMb());
+        ResponseEntity<Map<String, Object>> response =
+                errorBody(HttpStatus.UNPROCESSABLE_ENTITY, "EXPORT_TOO_LARGE", ex.getMessage());
+        response.getBody().put("maxSizeMb", ex.getMaxSizeMb());
+        response.getBody().put("sizeBytes", ex.getSizeBytes());
+        return response;
+    }
+
     @ExceptionHandler(UnprocessableEntityException.class)
     public ResponseEntity<Map<String, Object>> handleUnprocessable(UnprocessableEntityException ex) {
         return errorBody(HttpStatus.UNPROCESSABLE_ENTITY, "UNPROCESSABLE_ENTITY", ex.getMessage());

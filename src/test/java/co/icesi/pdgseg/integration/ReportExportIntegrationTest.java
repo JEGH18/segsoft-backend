@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -47,6 +48,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 "jwt.access-token-expiration-ms=900000",
                 "jwt.refresh-token-expiration-ms=28800000",
                 "sandbox.root=/tmp/pdgseg-report-integration-test",
+                "report.export.cache.dir=${java.io.tmpdir}/pdgseg-export-cache-it",
                 "cors.allowed-origins=http://localhost:5173"
         }
 )
@@ -155,6 +157,72 @@ class ReportExportIntegrationTest extends PostgreSQLContainerBase {
         JsonNode location = finding.path("locations").get(0).path("physicalLocation");
         assertThat(location.path("artifactLocation").path("uri").asText()).isEqualTo("src/db/UserDao.java");
         assertThat(location.path("region").path("startLine").asInt()).isEqualTo(42);
+    }
+
+    @Test
+    void repeatedExport_isServedFromCacheWithXCacheHeaders() throws Exception {
+        UUID reportId = generateReport();
+        for (String format : new String[]{"pdf", "sarif"}) {
+            byte[] first = mockMvc.perform(get("/api/v1/reports/{id}/export", reportId)
+                            .param("format", format)
+                            .header("Authorization", "Bearer " + auditorToken))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-Cache", "MISS"))
+                    .andReturn().getResponse().getContentAsByteArray();
+            byte[] second = mockMvc.perform(get("/api/v1/reports/{id}/export", reportId)
+                            .param("format", format)
+                            .header("Authorization", "Bearer " + auditorToken))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-Cache", "HIT"))
+                    .andReturn().getResponse().getContentAsByteArray();
+            assertThat(second).isEqualTo(first);
+        }
+    }
+
+    /** HTTP-level counterpart of ReportExportCachePerformanceTest. */
+    @Test
+    void cachedExports_respondInLessThan200Ms() throws Exception {
+        UUID reportId = generateReport();
+        for (String format : new String[]{"pdf", "sarif"}) {
+            exportStatus(reportId, format); // MISS: generates and caches
+            for (int i = 0; i < 5; i++) {
+                exportStatus(reportId, format); // warm-up
+            }
+            double[] millis = new double[30];
+            for (int i = 0; i < millis.length; i++) {
+                long start = System.nanoTime();
+                assertThat(exportStatus(reportId, format)).isEqualTo("HIT");
+                millis[i] = (System.nanoTime() - start) / 1e6;
+            }
+            Arrays.sort(millis);
+            double p95 = millis[(int) Math.ceil(millis.length * 0.95) - 1];
+            System.out.printf("[export-cache-http] format=%s HIT p50=%.2fms p95=%.2fms max=%.2fms (n=%d)%n",
+                    format, millis[millis.length / 2], p95, millis[millis.length - 1], millis.length);
+            assertThat(p95).as("p95 HIT %s", format).isLessThan(200);
+        }
+    }
+
+    @Test
+    void reportView_returnsTheReportAndListsIt() throws Exception {
+        UUID reportId = generateReport();
+
+        mockMvc.perform(get("/api/v1/reports/{id}", reportId).header("Authorization", "Bearer " + auditorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("GENERATED"))
+                .andExpect(jsonPath("$.repositoryName").value("report-it.zip"))
+                .andExpect(jsonPath("$.integrityVerified").value(true));
+        mockMvc.perform(get("/api/v1/reports").param("analysisId", analysisId.toString())
+                        .header("Authorization", "Bearer " + auditorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].analysisId").value(analysisId.toString()));
+    }
+
+    private String exportStatus(UUID reportId, String format) throws Exception {
+        return mockMvc.perform(get("/api/v1/reports/{id}/export", reportId)
+                        .param("format", format)
+                        .header("Authorization", "Bearer " + auditorToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getHeader("X-Cache");
     }
 
     @Test

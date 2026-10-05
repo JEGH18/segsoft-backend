@@ -23,6 +23,7 @@ import co.icesi.pdgseg.entity.enums.PolicyComplianceStatus;
 import co.icesi.pdgseg.entity.enums.ReportStatus;
 import co.icesi.pdgseg.entity.enums.SeverityLevel;
 import co.icesi.pdgseg.entity.enums.SourceType;
+import co.icesi.pdgseg.exception.ExportTooLargeException;
 import co.icesi.pdgseg.exception.ReportIntegrityException;
 import co.icesi.pdgseg.exception.ResourceNotFoundException;
 import co.icesi.pdgseg.exception.SarifValidationException;
@@ -30,6 +31,8 @@ import co.icesi.pdgseg.exception.UnprocessableEntityException;
 import co.icesi.pdgseg.exception.UnsupportedExportFormatException;
 import co.icesi.pdgseg.export.ReportExporter;
 import co.icesi.pdgseg.export.ReportExporterRegistry;
+import co.icesi.pdgseg.export.cache.ExportFileCache;
+import co.icesi.pdgseg.export.cache.ExportSizeLimit;
 import co.icesi.pdgseg.repository.AnalysisRepository;
 import co.icesi.pdgseg.repository.PolicyResultRepository;
 import co.icesi.pdgseg.repository.ReportRepository;
@@ -39,6 +42,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -46,6 +50,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
 import java.math.BigDecimal;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -72,6 +78,7 @@ class ReportServiceTest {
     @Mock RuleRepository ruleRepository;
     @Mock AuditService auditService;
     @Mock ReportExporter pdfExporter;
+    @TempDir Path cacheDir;
 
     private final ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json().build();
     private ReportService service;
@@ -84,9 +91,15 @@ class ReportServiceTest {
         lenient().when(pdfExporter.format()).thenReturn("pdf");
         lenient().when(pdfExporter.mediaType()).thenReturn(MediaType.APPLICATION_PDF);
         lenient().when(pdfExporter.fileExtension()).thenReturn("pdf");
-        service = new ReportService(reportRepository, analysisRepository, policyResultRepository, ruleRepository,
+        service = newService(List.of(pdfExporter), 50);
+    }
+
+    /** Real filesystem export cache in a per-test temp directory. */
+    private ReportService newService(List<ReportExporter> exporters, long maxExportSizeMb) {
+        return new ReportService(reportRepository, analysisRepository, policyResultRepository, ruleRepository,
                 userRepository, analysisService, analysisSnapshotService, new SecretMaskingService(),
-                new ReportExporterRegistry(List.of(pdfExporter)), auditService, objectMapper);
+                new ReportExporterRegistry(exporters), new ExportFileCache(cacheDir.toString(), Duration.ofHours(1)),
+                new ExportSizeLimit(maxExportSizeMb), auditService, objectMapper);
     }
 
     // ---- generate --------------------------------------------------------------------
@@ -206,9 +219,7 @@ class ReportServiceTest {
         ReportExporter sarifExporter = mock(ReportExporter.class);
         when(sarifExporter.format()).thenReturn("sarif");
         when(sarifExporter.export(any())).thenThrow(new SarifValidationException(List.of("#: forced")));
-        ReportService sarifService = new ReportService(reportRepository, analysisRepository, policyResultRepository,
-                ruleRepository, userRepository, analysisService, analysisSnapshotService, new SecretMaskingService(),
-                new ReportExporterRegistry(List.of(pdfExporter, sarifExporter)), auditService, objectMapper);
+        ReportService sarifService = newService(List.of(pdfExporter, sarifExporter), 50);
         when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
 
         assertThatThrownBy(() -> sarifService.export(reportId, "sarif", "auditor"))
@@ -273,6 +284,120 @@ class ReportServiceTest {
         assertThat(document.getValue().checksum()).isEqualTo(report.getChecksum());
         assertThat(document.getValue().content().metadata().repositoryName()).isEqualTo("acme-app");
         verify(auditService).record(eq("REPORT_EXPORTED"), eq("auditor"), isNull(), anyMap());
+    }
+
+    // ---- export cache --------------------------------------------------------------------
+
+    @Test
+    void export_firstRequestIsAMissAndTheNextOneIsServedFromCache() throws Exception {
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
+        when(pdfExporter.export(any())).thenReturn(new byte[]{'%', 'P', 'D', 'F'});
+
+        ExportedReport first = service.export(reportId, "pdf", "auditor");
+        ExportedReport second = service.export(reportId, "pdf", "auditor");
+
+        assertThat(first.cacheHit()).isFalse();
+        assertThat(second.cacheHit()).isTrue();
+        assertThat(second.content()).isEqualTo(first.content());
+        assertThat(second.fileName()).isEqualTo("segsoft-report-" + reportId + ".pdf");
+        verify(pdfExporter, times(1)).export(any());
+        verify(auditService).record(eq("REPORT_EXPORTED"), eq("auditor"), isNull(),
+                eq(Map.of("reportId", reportId.toString(), "format", "pdf", "cache", "MISS")));
+        verify(auditService).record(eq("REPORT_EXPORTED"), eq("auditor"), isNull(),
+                eq(Map.of("reportId", reportId.toString(), "format", "pdf", "cache", "HIT")));
+    }
+
+    @Test
+    void export_integrityIsVerifiedEvenWhenTheFileIsCached() throws Exception {
+        Report report = storedReport();
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(report));
+        when(pdfExporter.export(any())).thenReturn(new byte[]{'%', 'P', 'D', 'F'});
+        service.export(reportId, "pdf", "auditor");
+
+        report.setContentJson(report.getContentJson().replace("\"totalFindings\":0", "\"totalFindings\":7"));
+
+        assertThatThrownBy(() -> service.export(reportId, "pdf", "auditor"))
+                .isInstanceOf(ReportIntegrityException.class);
+    }
+
+    @Test
+    void export_aReportWhoseContentChangedGetsANewExport() throws Exception {
+        Report report = storedReport();
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(report));
+        when(pdfExporter.export(any())).thenReturn(new byte[]{1}, new byte[]{2});
+        service.export(reportId, "pdf", "auditor");
+
+        String changed = report.getContentJson().replace("\"acme-app\"", "\"acme-app-v2\"");
+        report.setContentJson(changed);
+        report.setChecksum(ReportService.sha256Hex(changed));
+        ExportedReport after = service.export(reportId, "pdf", "auditor");
+
+        assertThat(after.cacheHit()).isFalse();
+        assertThat(after.content()).containsExactly(2);
+        verify(pdfExporter, times(2)).export(any());
+    }
+
+    @Test
+    void export_aFileAboveTheLimitIsRejectedAndNeverCached() throws Exception {
+        ReportService limited = newService(List.of(pdfExporter), 1);
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
+        when(pdfExporter.export(any())).thenReturn(new byte[1024 * 1024 + 1]);
+
+        assertThatThrownBy(() -> limited.export(reportId, "pdf", "auditor"))
+                .isInstanceOf(ExportTooLargeException.class)
+                .hasMessageContaining("1 MB");
+        assertThatThrownBy(() -> limited.export(reportId, "pdf", "auditor"))
+                .isInstanceOf(ExportTooLargeException.class);
+
+        verify(pdfExporter, times(2)).export(any()); // regenerated: nothing was cached
+        try (var files = java.nio.file.Files.list(cacheDir)) {
+            assertThat(files).isEmpty();
+        }
+        verify(auditService, never()).record(eq("REPORT_EXPORTED"), any(), any(), anyMap());
+    }
+
+    @Test
+    void export_aCachedFileAboveALoweredLimitIsRejected() throws Exception {
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
+        when(pdfExporter.export(any())).thenReturn(new byte[1024 * 1024 + 1]);
+        service.export(reportId, "pdf", "auditor"); // cached under the 50 MB limit
+
+        ReportService lowered = newService(List.of(pdfExporter), 1);
+
+        assertThatThrownBy(() -> lowered.export(reportId, "pdf", "auditor"))
+                .isInstanceOf(ExportTooLargeException.class);
+        verify(pdfExporter, times(1)).export(any());
+    }
+
+    // ---- read ---------------------------------------------------------------------------
+
+    @Test
+    void get_returnsTheSummaryTheReportViewShows() throws Exception {
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(storedReport()));
+
+        var summary = service.get(reportId);
+
+        assertThat(summary.id()).isEqualTo(reportId);
+        assertThat(summary.status()).isEqualTo(ReportStatus.GENERATED);
+        assertThat(summary.repositoryName()).isEqualTo("acme-app");
+        assertThat(summary.generatedBy()).isEqualTo("auditor");
+        assertThat(summary.integrityVerified()).isTrue();
+        assertThat(summary.exportFormats()).containsExactly("pdf");
+    }
+
+    @Test
+    void get_flagsATamperedReport() throws Exception {
+        Report report = storedReport();
+        report.setChecksum("0".repeat(64));
+        when(reportRepository.findById(reportId)).thenReturn(Optional.of(report));
+
+        assertThat(service.get(reportId).integrityVerified()).isFalse();
+    }
+
+    @Test
+    void get_unknownReport_throwsNotFound() {
+        when(reportRepository.findById(reportId)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.get(reportId)).isInstanceOf(ResourceNotFoundException.class);
     }
 
     // ---- Fixtures ----------------------------------------------------------------------
