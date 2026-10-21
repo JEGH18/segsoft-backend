@@ -18,7 +18,57 @@
   necesitan el mismo disco. Vercel no ejecuta Java ni comparte disco entre servicios.
 - **Mismo dominio para frontend y backend** (`app.` y `api.` del mismo dominio): la cookie de
   sesión es `SameSite=Strict`. Con dominios distintos (por ejemplo `*.vercel.app` y la IP del
-  servidor) la sesión se pierde cada vez que se recarga la página.
+  servidor) la sesión se pierde cada vez que se recarga la página. Sin dominio propio, la
+  alternativa es el proxy de Vercel (ver "Despliegue actual").
+
+## Despliegue actual (sin dominio propio)
+
+Desplegado el 2026-10-21. Sin un dominio compartido, el navegador solo habla con Vercel:
+`segsoft-frontend/vercel.json` reenvía `/api/*` al backend, así que la cookie de sesión queda en
+el dominio de Vercel.
+
+```
+navegador ─► https://segsoft-frontend.vercel.app                  (Vercel, proyecto segsoft-frontend)
+                └─ /api/* ─► https://segsoft-icesi.westus3.cloudapp.azure.com   (VM de Azure)
+                                └─ Caddy → backend → engine + PostgreSQL
+```
+
+| Pieza | Detalle |
+|---|---|
+| Frontend | Vercel, importado del espejo de GitHub `JEGH18/segsoft-frontend` (rama `main`): cada push a `main` en GitHub redespliega. **Sin** variables de entorno: sin `VITE_API_BASE_URL` el frontend llama a `/api/...` en su propio origen |
+| Proxy | `vercel.json`: `/api/:path*` → `https://segsoft-icesi.westus3.cloudapp.azure.com/api/:path*`, antes de la regla de la SPA |
+| VM | Azure for Students, VM `segsoft`, región **West US 3**, `Standard_B2als_v2` (2 vCPU, 4 GB, x64), Ubuntu 24.04, disco Standard SSD de 30 GB, 2 GB de swap, usuario SSH `Segsoft` |
+| Nombre del backend | *DNS name label* `segsoft-icesi` de la IP pública `segsoft-ip` (estática, 20.168.55.230). Caddy obtiene el certificado de Let's Encrypt para ese nombre |
+| Red | Grupo de seguridad con 22, 80 y 443 abiertos. El backend solo escucha en `127.0.0.1:8080` y el motor no publica puertos |
+| Código en la VM | `/opt/segsoft/segsoft-backend` y `/opt/segsoft/segsoft-motorpython`, clonados del **espejo de GitHub** (p2tools pide credenciales y no se guardan en el servidor) |
+| Secretos | `/opt/segsoft/segsoft-backend/deploy/.env` (permisos 600), generado con `generar-env.sh segsoft-icesi.westus3.cloudapp.azure.com https://segsoft-frontend.vercel.app` |
+| Apagado | *Auto-shutdown* de Azure a las 02:00 (hora de Bogotá). Al encenderla con **Start** todo se levanta solo (Docker y los contenedores con `restart: unless-stopped`) |
+
+**Restricciones de la suscripción Azure for Students** (por si hay que recrear la VM):
+
+- Solo permite las regiones `westus3`, `southcentralus`, `canadacentral`, `brazilsouth` y
+  `chilecentral` (política *Allowed resource deployment regions*). Las demás fallan al crear con
+  `RequestDisallowedByAzure`.
+- La cuota por familia varía por región (`D2als_v7` tiene 0 vCPU en West US 3). En South
+  Central US los B2 disponibles son ARM. Para revisar, en Cloud Shell:
+
+  ```bash
+  az vm list-usage -l westus3 --query '[?limit > `0`].{familia:localName, usado:currentValue, limite:limit}' -o table
+  ```
+- Los créditos (100 USD) vencen el 12 de febrero de 2027. La VM cuesta unos 0,0376 USD por hora
+  encendida, más el disco.
+
+**Ver las contraseñas de las cuentas** (en tu terminal, no las compartas por chat):
+`ssh Segsoft@20.168.55.230 'grep SEGSOFT_ACCOUNTS /opt/segsoft/segsoft-backend/deploy/.env'`.
+
+**Actualizar el backend o el motor** (después de llevar los cambios de p2tools al espejo de GitHub):
+`ssh Segsoft@20.168.55.230`, y en `/opt/segsoft/segsoft-backend/deploy`:
+`git -C .. pull && git -C ../../segsoft-motorpython pull && docker compose up -d --build`.
+
+**Límite conocido:** las subidas pasan por el proxy de Vercel, cuyo límite de tamaño no está
+documentado. Los ZIP de prueba (unos 20 KB) pasan; uno cercano a los 100 MB podría fallar. Con
+un dominio propio (`app.`/`api.`) el frontend llamaría al backend directamente: basta con
+definir `VITE_API_BASE_URL` en Vercel y la regla del proxy deja de usarse.
 
 ## Requisitos
 
@@ -34,6 +84,8 @@
 sudo mkdir -p /opt/segsoft && sudo chown "$USER" /opt/segsoft && cd /opt/segsoft
 git clone https://pi2tools.icesi.edu.co/bitbucket/scm/segsoft/segsoft-backend.git
 git clone https://pi2tools.icesi.edu.co/bitbucket/scm/segsoft/segsoft-motorpython.git
+# p2tools pide usuario y contraseña. Para no dejarlos en el servidor, se puede clonar el
+# espejo público: https://github.com/JEGH18/segsoft-backend.git y .../segsoft-motorpython.git
 cd segsoft-backend/deploy
 
 ./generar-env.sh api.<dominio> https://app.<dominio>   # anota las contraseñas que imprime
