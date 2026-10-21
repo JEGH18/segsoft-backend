@@ -1,0 +1,12 @@
+# HTTPS del backend. Caddy obtiene y renueva el certificado de Let's Encrypt para
+# API_DOMAIN (el DNS debe apuntar a este servidor y los puertos 80 y 443 estar abiertos).
+{$API_DOMAIN} {
+	encode gzip
+
+	# La app acepta ZIP de hasta 100 MB (MAX_REPO_SIZE_MB); un poco de margen para el multipart.
+	request_body {
+		max_size 110MB
+	}
+
+	reverse_proxy backend:8080
+}

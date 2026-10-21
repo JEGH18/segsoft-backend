@@ -23,7 +23,7 @@ pipeline {
         MAVEN_IMAGE = 'maven:3.9-eclipse-temurin-17'
         POSTGRES_IMAGE = 'postgres:15'
         MAVEN_ARGS = '-B -Dmaven.repo.local=.m2/repository -Dsurefire.failIfNoSpecifiedTests=false'
-        UNIT_TESTS = 'ReportChecksumTest,StructuredReportSchemaTest,ReportGeneratorServiceTest,ReportServiceTest,ReportControllerTest,AnalysisReportControllerTest,ReportExportCachePerformanceTest,PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest'
+        UNIT_TESTS = 'ReportChecksumTest,StructuredReportSchemaTest,ReportGeneratorServiceTest,ReportServiceTest,ReportControllerTest,AnalysisReportControllerTest,ReportExportCachePerformanceTest,PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest,ProdAccountsInitializerTest'
         INTEGRATION_TESTS = 'StructuredReportIntegrationTest,ReportExportIntegrationTest'
     }
 
