@@ -1,0 +1,85 @@
+# Despliegue de SegSoft: backend + motor + PostgreSQL + HTTPS (Caddy).
+# El frontend va aparte, en Vercel. Guía completa: deploy/README.md.
+#
+# Requiere los repositorios clonados uno al lado del otro:
+#   <carpeta>/segsoft-backend      (este repositorio)
+#   <carpeta>/segsoft-motorpython
+# y un archivo deploy/.env creado con ./generar-env.sh.
+#
+#   docker compose up -d --build   # encender (y reconstruir tras un git pull)
+#   docker compose stop            # apagar entre sesiones de prueba (conserva los datos)
+
+name: segsoft
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: segsoft
+      POSTGRES_USER: segsoft
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD en .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U segsoft -d segsoft"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # El backend no le envía el código al motor: le pasa la ruta del repositorio dentro de
+  # /tmp/pdgseg-sandbox, así que ambos montan el mismo volumen en la misma ruta.
+  engine:
+    build: ../../segsoft-motorpython
+    restart: unless-stopped
+    environment:
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Falta INTERNAL_SERVICE_TOKEN en .env}
+    volumes:
+      - sandbox:/tmp/pdgseg-sandbox
+    # Sin "ports": el motor solo es accesible desde la red interna de Docker.
+
+  backend:
+    build: ..
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      engine:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://postgres:5432/segsoft
+      DB_USER: segsoft
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET en .env}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      ENGINE_BASE_URL: http://engine:8001
+      CORS_ALLOWED_ORIGINS: ${FRONTEND_ORIGIN:?Falta FRONTEND_ORIGIN en .env}
+      SEGSOFT_ACCOUNTS: ${SEGSOFT_ACCOUNTS:?Falta SEGSOFT_ACCOUNTS en .env}
+      SANDBOX_ROOT: /tmp/pdgseg-sandbox
+    volumes:
+      - sandbox:/tmp/pdgseg-sandbox
+    # Solo desde la propia máquina (diagnóstico); desde fuera se entra por Caddy.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Falta API_DOMAIN en .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  sandbox:
+  caddy_data:
+  caddy_config:
