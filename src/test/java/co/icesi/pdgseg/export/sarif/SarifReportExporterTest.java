@@ -43,7 +43,7 @@ class SarifReportExporterTest {
 
     private static SarifReportExporter newExporter(SarifSchemaValidator validator) {
         return new SarifReportExporter(new ReportTextSanitizer(new SecretMaskingService()), validator,
-                "0.1.0", "https://github.com/JEGH18/segsoft-backend");
+                "0.1.0", "https://pi2tools.icesi.edu.co/bitbucket/projects/SEGSOFT/repos/segsoft-backend");
     }
 
     // ---- Format --------------------------------------------------------------------
@@ -83,7 +83,7 @@ class SarifReportExporterTest {
     @Test
     void unfilteredBuildVersionFallsBackToADevVersion() throws Exception {
         SarifReportExporter unfiltered = new SarifReportExporter(new ReportTextSanitizer(new SecretMaskingService()),
-                validator, "@project.version@", "https://github.com/JEGH18/segsoft-backend");
+                validator, "@project.version@", "https://pi2tools.icesi.edu.co/bitbucket/projects/SEGSOFT/repos/segsoft-backend");
         JsonNode driver = mapper.readTree(unfiltered.export(ReportFixtures.documentForSarif()))
                 .path("runs").get(0).path("tool").path("driver");
         assertThat(driver.path("version").asText()).isEqualTo("0.0.0-dev");

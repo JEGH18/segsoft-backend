@@ -93,7 +93,7 @@ public class SarifReportExporter implements ReportExporter {
             ReportTextSanitizer sanitizer,
             SarifSchemaValidator validator,
             @Value("${report.sarif.tool-version:0.1.0}") String toolVersion,
-            @Value("${report.sarif.information-uri:https://github.com/JEGH18/segsoft-backend}") String informationUri
+            @Value("${report.sarif.information-uri:https://pi2tools.icesi.edu.co/bitbucket/projects/SEGSOFT/repos/segsoft-backend}") String informationUri
     ) {
         this.sanitizer = sanitizer;
         this.validator = validator;
