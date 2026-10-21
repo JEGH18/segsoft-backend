@@ -184,7 +184,7 @@
       </plugin>
 
       <!-- Exclude *IntegrationTest from the default mvn test cycle.
-           They require Docker (Testcontainers) and run in CI via -P integration-tests. -->
+           They require PostgreSQL (see application-test.yml) and run in CI via -P integration-tests. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -199,7 +199,7 @@
 
   <profiles>
     <profile>
-      <!-- Run integration tests (require Docker): mvn test -Pintegration-tests -->
+      <!-- Run integration tests (require PostgreSQL): mvn test -Pintegration-tests -->
       <id>integration-tests</id>
       <build>
         <plugins>
