@@ -40,6 +40,13 @@ jwt:
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
 
+auth:
+  registration:
+    # Self-registration creates DEVELOPER accounts; AUDITOR and SECURITY_ADMIN come from SEGSOFT_ACCOUNTS.
+    enabled: ${SEGSOFT_REGISTRATION_ENABLED:true}
+    max-per-ip-per-hour: ${REGISTRATION_MAX_PER_IP_PER_HOUR:20}
+    max-per-hour: ${REGISTRATION_MAX_PER_HOUR:100}
+
 engine:
   base-url: ${ENGINE_BASE_URL:http://localhost:18001}
   service-token: ${INTERNAL_SERVICE_TOKEN:dev-internal-token}
