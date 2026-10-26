@@ -123,6 +123,16 @@ public class GlobalExceptionHandler {
         return errorBody(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", ex.getMessage());
     }
 
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<Map<String, Object>> handleTooManyRequests(TooManyRequestsException ex) {
+        return errorBody(HttpStatus.TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", ex.getMessage());
+    }
+
+    @ExceptionHandler(RegistrationDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleRegistrationDisabled(RegistrationDisabledException ex) {
+        return errorBody(HttpStatus.FORBIDDEN, "REGISTRATION_DISABLED", ex.getMessage());
+    }
+
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<Map<String, Object>> handleConflict(ConflictException ex) {
         return errorBody(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage());
