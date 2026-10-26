@@ -58,6 +58,11 @@ navegador ─► https://segsoft-frontend.vercel.app                  (Vercel, p
 - Los créditos (100 USD) vencen el 12 de febrero de 2027. La VM cuesta unos 0,0376 USD por hora
   encendida, más el disco.
 
+**Registro público:** cualquiera puede crearse una cuenta DEVELOPER desde
+`https://segsoft-frontend.vercel.app/register`. Para apagarlo, agrega
+`SEGSOFT_REGISTRATION_ENABLED=false` a `deploy/.env` y ejecuta `docker compose up -d backend`
+(detalle y límites en `segsoft-docs/registro-usuarios.md`).
+
 **Ver las contraseñas de las cuentas** (en tu terminal, no las compartas por chat):
 `ssh Segsoft@20.168.55.230 'grep SEGSOFT_ACCOUNTS /opt/segsoft/segsoft-backend/deploy/.env'`.
 
@@ -153,8 +158,12 @@ cada arranque.
   conserven su contraseña pública se deshabilitan.
 - Solo Caddy queda expuesto. El motor no tiene puertos publicados y el backend solo escucha en
   `127.0.0.1:8080` (diagnóstico desde el propio servidor).
-- Sin sesión, la API solo responde al login, al estado del servicio y a la documentación
-  Swagger.
+- Sin sesión, la API solo responde al login, al registro, al estado del servicio y a la
+  documentación Swagger.
+- El registro público crea **solo cuentas DEVELOPER**, con límites de intentos por IP y de
+  cuentas nuevas por hora (`REGISTRATION_MAX_PER_IP_PER_HOUR`, `REGISTRATION_MAX_PER_HOUR`).
+  Se apaga con `SEGSOFT_REGISTRATION_ENABLED=false`. Los roles AUDITOR y SECURITY_ADMIN solo
+  salen de `SEGSOFT_ACCOUNTS`.
 - Apaga el servidor (`docker compose stop`) cuando no haya sesiones de prueba.
 
 ## Problemas frecuentes
