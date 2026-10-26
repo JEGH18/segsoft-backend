@@ -89,7 +89,7 @@ class RepositoryControllerIntegrationTest extends PostgreSQLContainerBase {
 
     @BeforeAll
     void seedUserAndLogin() throws Exception {
-        Role devRole = roleRepository.findByName(RoleType.DEVELOPER.name())
+        Role devRole = roleRepository.findByName(RoleType.DEVELOPER)
                 .orElseGet(() -> roleRepository.save(newRole(RoleType.DEVELOPER)));
 
         User dev = userRepository.findByUsername("dev_test")

@@ -58,6 +58,13 @@ public class AuthService {
             throw new AuthException(INVALID_CREDENTIALS);
         }
 
+        // Disabled accounts (e.g. demo accounts disabled by ProdAccountsInitializer) cannot log in.
+        if (!Boolean.TRUE.equals(user.getEnabled())) {
+            auditService.record("LOGIN_FAILURE", user.getUsername(), ipAddress,
+                    Map.of("reason", "account_disabled"));
+            throw new AuthException(INVALID_CREDENTIALS);
+        }
+
         if (isLocked(user)) {
             auditService.record("ACCOUNT_LOCKED", user.getUsername(), ipAddress,
                     Map.of("locked_until", user.getLockedUntil().toString()));
@@ -77,13 +84,17 @@ public class AuthService {
         user.setLastFailedAt(null);
         userRepository.save(user);
 
+        AuthResponse auth = startSession(user);
+        auditService.record("LOGIN_SUCCESS", user.getUsername(), ipAddress,
+                Map.of("roles", auth.roles()));
+        return auth;
+    }
+
+    /** Issues the access and refresh tokens of a new session for {@code user}. */
+    public AuthResponse startSession(User user) {
         List<String> roles = extractRoleNames(user);
         String accessToken  = jwtTokenProvider.generateAccessToken(user.getUsername(), roles);
         String refreshToken = jwtTokenProvider.generateRefreshToken(user.getUsername());
-
-        auditService.record("LOGIN_SUCCESS", user.getUsername(), ipAddress,
-                Map.of("roles", roles));
-
         return new AuthResponse(accessToken, refreshToken, roles);
     }
 
