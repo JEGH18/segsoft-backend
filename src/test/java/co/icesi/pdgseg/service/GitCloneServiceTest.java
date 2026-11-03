@@ -8,6 +8,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -18,7 +20,9 @@ class GitCloneServiceTest {
     @BeforeEach
     void setUp() {
         service = new GitCloneService();
-        ReflectionTestUtils.setField(service, "allowedGitDomains", "github.com,gitlab.com,bitbucket.org");
+        ReflectionTestUtils.setField(service, "allowedGitDomains",
+                "github.com,gitlab.com,bitbucket.org,pi2tools.icesi.edu.co");
+        ReflectionTestUtils.setField(service, "bitbucketServerHosts", "pi2tools.icesi.edu.co");
     }
 
     // --- domain whitelist ---
@@ -28,7 +32,8 @@ class GitCloneServiceTest {
             "https://github.com/user/repo.git",
             "https://gitlab.com/user/repo.git",
             "https://bitbucket.org/user/repo.git",
-            "https://www.github.com/user/repo.git"
+            "https://www.github.com/user/repo.git",
+            "https://pi2tools.icesi.edu.co/bitbucket/scm/segsoft/segsoft-backend.git"
     })
     void validateDomain_allowedDomains_doesNotThrow(String url) {
         assertThatCode(() -> invokeValidateDomain(url)).doesNotThrowAnyException();
@@ -84,6 +89,33 @@ class GitCloneServiceTest {
     }
 
     @Test
+    void buildAuthenticatedUrl_bitbucket_usesXTokenAuthUsernameWithTokenAsPassword() {
+        String result = invokeBuildAuthenticatedUrl("https://bitbucket.org/pi2tools/repo.git", "bbtoken123");
+        org.assertj.core.api.Assertions.assertThat(result)
+                .isEqualTo("https://x-token-auth:bbtoken123@bitbucket.org/pi2tools/repo.git");
+    }
+
+    @Test
+    void buildAuthenticatedUrl_bitbucketHostIsCaseInsensitive() {
+        String result = invokeBuildAuthenticatedUrl("https://BitBucket.org/pi2tools/repo.git", "bbtoken123");
+        org.assertj.core.api.Assertions.assertThat(result).contains("x-token-auth:bbtoken123@");
+    }
+
+    @Test
+    void buildAuthenticatedUrl_atlassianApiTokenWithEqualsSign_isEncodedInsidePasswordPart() {
+        // Atlassian API tokens end in "=XXXXXXXX"; it must stay inside the password, URL-encoded.
+        String result = invokeBuildAuthenticatedUrl("https://bitbucket.org/pi2tools/repo.git", "ATATT3xFf=AB12");
+        org.assertj.core.api.Assertions.assertThat(result)
+                .isEqualTo("https://x-token-auth:ATATT3xFf%3DAB12@bitbucket.org/pi2tools/repo.git");
+    }
+
+    @Test
+    void buildAuthenticatedUrl_lookalikeBitbucketDomain_doesNotGetBitbucketUsername() {
+        String result = invokeBuildAuthenticatedUrl("https://notbitbucket.org/user/repo.git", "tok");
+        org.assertj.core.api.Assertions.assertThat(result).isEqualTo("https://tok@notbitbucket.org/user/repo.git");
+    }
+
+    @Test
     void buildAuthenticatedUrl_withoutToken_returnsUrlUnchanged() {
         String result = invokeBuildAuthenticatedUrl("https://github.com/user/repo.git", null);
         org.assertj.core.api.Assertions.assertThat(result).isEqualTo("https://github.com/user/repo.git");
@@ -97,6 +129,58 @@ class GitCloneServiceTest {
                 .startsWith("https://")
                 .contains("@github.com/user/repo.git")
                 .doesNotContain("tok@en/with special"); // raw token never appears verbatim
+    }
+
+    // --- Bitbucket Server / Data Center (p2tools): token as a Bearer header ---
+
+    private static final String P2TOOLS_REPO = "https://pi2tools.icesi.edu.co/bitbucket/scm/segsoft/segsoft-backend.git";
+
+    @Test
+    void buildAuthenticatedUrl_bitbucketServer_keepsTokenOutOfTheUrl() {
+        String result = invokeBuildAuthenticatedUrl(P2TOOLS_REPO, "BBDC-secret");
+        org.assertj.core.api.Assertions.assertThat(result).isEqualTo(P2TOOLS_REPO);
+    }
+
+    @Test
+    void authHeaderEnvironment_bitbucketServer_sendsBearerHeaderScopedToTheHost() {
+        Map<String, String> env = invokeAuthHeaderEnvironment(P2TOOLS_REPO, "BBDC-secret");
+        org.assertj.core.api.Assertions.assertThat(env).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "GIT_CONFIG_COUNT", "1",
+                "GIT_CONFIG_KEY_0", "http.https://pi2tools.icesi.edu.co/.extraHeader",
+                "GIT_CONFIG_VALUE_0", "Authorization: Bearer BBDC-secret"));
+    }
+
+    @Test
+    void authHeaderEnvironment_bitbucketServerWithPort_includesThePortInTheScope() {
+        Map<String, String> env = invokeAuthHeaderEnvironment(
+                "https://pi2tools.icesi.edu.co:8443/scm/segsoft/repo.git", "tok");
+        org.assertj.core.api.Assertions.assertThat(env)
+                .containsEntry("GIT_CONFIG_KEY_0", "http.https://pi2tools.icesi.edu.co:8443/.extraHeader");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://github.com/user/repo.git",
+            "https://bitbucket.org/pi2tools/repo.git",
+            "https://pi2tools.icesi.edu.co.evil.com/scm/segsoft/repo.git"
+    })
+    void authHeaderEnvironment_otherHosts_addsNoHeader(String url) {
+        org.assertj.core.api.Assertions.assertThat(invokeAuthHeaderEnvironment(url, "tok")).isEmpty();
+    }
+
+    @Test
+    void authHeaderEnvironment_withoutToken_addsNoHeader() {
+        org.assertj.core.api.Assertions.assertThat(invokeAuthHeaderEnvironment(P2TOOLS_REPO, null)).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "tok\r\nX-Injected: 1", "tok en" })
+    void authHeaderEnvironment_tokenWithControlCharsOrSpaces_throwsBadRequest(String token) {
+        assertThatThrownBy(() -> invokeAuthHeaderEnvironment(P2TOOLS_REPO, token))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("caracteres no válidos")
+                .hasMessageNotContaining(token)
+                .satisfies(ex -> assertStatusCode((ResponseStatusException) ex, HttpStatus.BAD_REQUEST));
     }
 
     // --- branch name validation ---
@@ -160,6 +244,20 @@ class GitCloneServiceTest {
             var method = GitCloneService.class.getDeclaredMethod("buildAuthenticatedUrl", String.class, String.class);
             method.setAccessible(true);
             return (String) method.invoke(service, gitUrl, accessToken);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            if (e.getCause() instanceof RuntimeException re) throw re;
+            throw new RuntimeException(e);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> invokeAuthHeaderEnvironment(String gitUrl, String accessToken) {
+        try {
+            var method = GitCloneService.class.getDeclaredMethod("authHeaderEnvironment", String.class, String.class);
+            method.setAccessible(true);
+            return (Map<String, String>) method.invoke(service, gitUrl, accessToken);
         } catch (java.lang.reflect.InvocationTargetException e) {
             if (e.getCause() instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);

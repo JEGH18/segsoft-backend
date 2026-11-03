@@ -58,7 +58,9 @@ sandbox:
   max-repo-size-mb: ${MAX_REPO_SIZE_MB:100}
   max-file-count: ${MAX_FILE_COUNT:5000}
   max-compression-ratio: ${MAX_COMPRESSION_RATIO:100}
-  allowed-git-domains: ${ALLOWED_GIT_DOMAINS:github.com,gitlab.com,bitbucket.org}
+  allowed-git-domains: ${ALLOWED_GIT_DOMAINS:github.com,gitlab.com,bitbucket.org,pi2tools.icesi.edu.co}
+  # Bitbucket Server / Data Center: the access token is sent as a Bearer header.
+  bitbucket-server-hosts: ${BITBUCKET_SERVER_HOSTS:pi2tools.icesi.edu.co}
 
 rule:
   timeout-ms: ${RULE_TIMEOUT_MS:30000}
