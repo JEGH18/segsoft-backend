@@ -28,7 +28,7 @@ Desplegado el 2026-10-21. Sin un dominio compartido, el navegador solo habla con
 el dominio de Vercel.
 
 ```
-navegador ─► https://segsoft-frontend.vercel.app                  (Vercel, proyecto segsoft-frontend)
+navegador ─► https://www.segsoft.website                         (Vercel, proyecto segsoft-frontend)
                 └─ /api/* ─► https://segsoft-icesi.westus3.cloudapp.azure.com   (VM de Azure)
                                 └─ Caddy → backend → engine + PostgreSQL
 ```
@@ -41,7 +41,8 @@ navegador ─► https://segsoft-frontend.vercel.app                  (Vercel, p
 | Nombre del backend | *DNS name label* `segsoft-icesi` de la IP pública `segsoft-ip` (estática, 20.168.55.230). Caddy obtiene el certificado de Let's Encrypt para ese nombre |
 | Red | Grupo de seguridad con 22, 80 y 443 abiertos. El backend solo escucha en `127.0.0.1:8080` y el motor no publica puertos |
 | Código en la VM | `/opt/segsoft/segsoft-backend` y `/opt/segsoft/segsoft-motorpython`, clonados del **espejo de GitHub** (p2tools pide credenciales y no se guardan en el servidor) |
-| Secretos | `/opt/segsoft/segsoft-backend/deploy/.env` (permisos 600), generado con `generar-env.sh segsoft-icesi.westus3.cloudapp.azure.com https://segsoft-frontend.vercel.app` |
+| Dominio del frontend | `www.segsoft.website` (desde 2026-11-02; `segsoft.website` redirige a `www`). `segsoft-frontend.vercel.app` sigue respondiendo |
+| Secretos | `/opt/segsoft/segsoft-backend/deploy/.env` (permisos 600), generado con `generar-env.sh segsoft-icesi.westus3.cloudapp.azure.com https://segsoft-frontend.vercel.app`. `FRONTEND_ORIGIN` debe listar **todos** los dominios del frontend, separados por comas: `https://www.segsoft.website,https://segsoft.website,https://segsoft-frontend.vercel.app` |
 | Apagado | *Auto-shutdown* de Azure a las 02:00 (hora de Bogotá). Al encenderla con **Start** todo se levanta solo (Docker y los contenedores con `restart: unless-stopped`) |
 
 **Restricciones de la suscripción Azure for Students** (por si hay que recrear la VM):
@@ -59,7 +60,7 @@ navegador ─► https://segsoft-frontend.vercel.app                  (Vercel, p
   encendida, más el disco.
 
 **Registro público:** cualquiera puede crearse una cuenta DEVELOPER desde
-`https://segsoft-frontend.vercel.app/register`. Para apagarlo, agrega
+`https://www.segsoft.website/register`. Para apagarlo, agrega
 `SEGSOFT_REGISTRATION_ENABLED=false` a `deploy/.env` y ejecuta `docker compose up -d backend`
 (detalle y límites en `segsoft-docs/registro-usuarios.md`).
 
@@ -171,7 +172,7 @@ cada arranque.
 | Síntoma | Causa probable |
 |---|---|
 | La sesión se pierde al recargar la página | Frontend y backend en dominios distintos (ver arriba) |
-| "Network Error" o error de CORS en la consola del navegador | `FRONTEND_ORIGIN` en `.env` no coincide exactamente con la URL del frontend (sin `/` final) |
+| "Network Error", error de CORS o **403** al registrarse o iniciar sesión | `FRONTEND_ORIGIN` en `.env` no incluye exactamente la URL del frontend (sin `/` final). Pasa al cambiar de dominio: aunque las peticiones vayan por el proxy de Vercel, el navegador envía `Origin` con el dominio nuevo. Agregarlo a la lista (separada por comas) y `docker compose up -d backend` |
 | El backend se reinicia en bucle con "SEGSOFT_ACCOUNTS inválida" | El mensaje dice qué entrada corregir en `.env` |
 | Caddy no obtiene el certificado | El DNS de `api.<dominio>` aún no apunta al servidor, o los puertos 80/443 están cerrados |
 | Al recargar `/reports/...` aparece un 404 de Vercel | Falta el `vercel.json` en el despliegue |
