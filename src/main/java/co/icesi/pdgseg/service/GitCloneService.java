@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -23,8 +24,12 @@ public class GitCloneService {
 
     private static final Logger log = LoggerFactory.getLogger(GitCloneService.class);
 
-    @Value("${sandbox.allowed-git-domains:github.com,gitlab.com,bitbucket.org}")
+    @Value("${sandbox.allowed-git-domains:github.com,gitlab.com,bitbucket.org,pi2tools.icesi.edu.co}")
     private String allowedGitDomains;
+
+    /** Self-hosted Bitbucket Server / Data Center hosts (e.g. p2tools), which take the token as a Bearer header. */
+    @Value("${sandbox.bitbucket-server-hosts:pi2tools.icesi.edu.co}")
+    private String bitbucketServerHosts;
 
     private static final int CLONE_TIMEOUT_SECONDS = 120;
 
@@ -75,16 +80,19 @@ public class GitCloneService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL Git inválida: " + gitUrl);
         }
 
-        List<String> allowed = Arrays.asList(allowedGitDomains.split(","));
-        boolean permitted = allowed.stream()
-                .map(String::trim)
-                .anyMatch(d -> host.equals(d) || host.endsWith("." + d));
-
-        if (!permitted) {
+        if (!matchesAnyDomain(host, allowedGitDomains)) {
             log.warn("Intento de clonar desde dominio no permitido: {}", host);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Dominio Git no permitido: " + host + ". Dominios permitidos: " + allowedGitDomains);
         }
+    }
+
+    private static boolean matchesAnyDomain(String host, String domains) {
+        List<String> list = Arrays.asList(domains.split(","));
+        return list.stream()
+                .map(String::trim)
+                .filter(d -> !d.isEmpty())
+                .anyMatch(d -> host.equals(d) || host.endsWith("." + d));
     }
 
     /**
@@ -120,6 +128,7 @@ public class GitCloneService {
                 "git", "clone", "--depth=1", "--branch", branch, cloneUrl, targetDir.toString()
         );
         pb.environment().put("GIT_TERMINAL_PROMPT", "0");
+        pb.environment().putAll(authHeaderEnvironment(gitUrl, accessToken));
         pb.redirectErrorStream(true);
 
         Process process;
@@ -147,15 +156,22 @@ public class GitCloneService {
         }
 
         if (process.exitValue() != 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "El clonado falló. Verifique que la URL y la rama sean correctas y que el repositorio sea público.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, cloneFailureMessage(accessToken));
         }
     }
 
+    private String cloneFailureMessage(String accessToken) {
+        if (accessToken == null || accessToken.isBlank()) {
+            return "El clonado falló. Verifique que la URL y la rama sean correctas. "
+                    + "Si el repositorio es privado, proporcione un token de acceso.";
+        }
+        return "El clonado falló. Verifique que la URL y la rama sean correctas y que el token "
+                + "tenga permiso de lectura sobre el repositorio.";
+    }
+
     /**
-     * Injects the token as URL userinfo (the form every major Git host
-     * accepts over HTTPS: https://TOKEN@host/...). Built fresh for this one
-     * process invocation only -- never returned, logged, or stored.
+     * Injects the token as URL userinfo. Built fresh for this one process
+     * invocation only -- never returned, logged, or stored.
      */
     private String buildAuthenticatedUrl(String gitUrl, String accessToken) {
         if (accessToken == null || accessToken.isBlank()) {
@@ -163,15 +179,70 @@ public class GitCloneService {
         }
         try {
             URL url = new URL(gitUrl);
+            if (isBitbucketServer(url.getHost())) {
+                return gitUrl; // the token goes in a header instead, see authHeaderEnvironment
+            }
             String encodedToken = URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
             int port = url.getPort();
-            return url.getProtocol() + "://" + encodedToken + "@" + url.getHost()
+            return url.getProtocol() + "://" + userInfoFor(url.getHost(), encodedToken) + "@" + url.getHost()
                     + (port != -1 ? ":" + port : "")
                     + url.getPath()
                     + (url.getQuery() != null ? "?" + url.getQuery() : "");
         } catch (MalformedURLException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL Git inválida: " + gitUrl);
         }
+    }
+
+    /**
+     * GitHub accepts the token as the username with an empty password
+     * (TOKEN@host). Bitbucket Cloud rejects that: it needs the fixed username
+     * "x-token-auth" with the token as password, which works for repository,
+     * project and workspace access tokens as well as Atlassian API tokens.
+     */
+    private String userInfoFor(String host, String encodedToken) {
+        String h = host.toLowerCase();
+        if (h.equals("bitbucket.org") || h.endsWith(".bitbucket.org")) {
+            return "x-token-auth:" + encodedToken;
+        }
+        return encodedToken;
+    }
+
+    /**
+     * Bitbucket Server / Data Center HTTP access tokens: project and repository
+     * tokens only work as "Authorization: Bearer", never in Basic auth, and
+     * personal tokens accept Bearer too. Git reads the header from GIT_CONFIG_*
+     * variables, scoped to the repository's host, so the token stays out of the
+     * process arguments and out of the cloned repository's .git/config.
+     */
+    private Map<String, String> authHeaderEnvironment(String gitUrl, String accessToken) {
+        if (accessToken == null || accessToken.isBlank()) {
+            return Map.of();
+        }
+        URL url;
+        try {
+            url = new URL(gitUrl);
+        } catch (MalformedURLException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL Git inválida: " + gitUrl);
+        }
+        if (!isBitbucketServer(url.getHost())) {
+            return Map.of();
+        }
+        String token = accessToken.trim();
+        // Printable ASCII only: a CR/LF would let the token inject extra headers.
+        if (!token.matches("[\\x21-\\x7E]+")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "El token de acceso contiene caracteres no válidos.");
+        }
+        int port = url.getPort();
+        String hostScope = url.getProtocol() + "://" + url.getHost() + (port != -1 ? ":" + port : "") + "/";
+        return Map.of(
+                "GIT_CONFIG_COUNT", "1",
+                "GIT_CONFIG_KEY_0", "http." + hostScope + ".extraHeader",
+                "GIT_CONFIG_VALUE_0", "Authorization: Bearer " + token);
+    }
+
+    private boolean isBitbucketServer(String host) {
+        return matchesAnyDomain(host.toLowerCase(), bitbucketServerHosts);
     }
 
     private void deleteQuietly(Path path) {
