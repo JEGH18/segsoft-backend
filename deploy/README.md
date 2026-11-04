@@ -35,7 +35,7 @@ navegador ─► https://www.segsoft.website                         (Vercel, pr
 
 | Pieza | Detalle |
 |---|---|
-| Frontend | Vercel, importado del espejo de GitHub `JEGH18/segsoft-frontend` (rama `main`): cada push a `main` en GitHub redespliega. **Sin** variables de entorno: sin `VITE_API_BASE_URL` el frontend llama a `/api/...` en su propio origen |
+| Frontend | Vercel, importado del espejo de GitHub `JEGH18/segsoft-frontend` (rama `main`): cada push a `main` en GitHub redespliega. Sin `VITE_API_BASE_URL` el frontend llama a `/api/...` en su propio origen. Única variable de entorno: `PROXY_SECRET` (ver "IP real de los usuarios") |
 | Proxy | `vercel.json`: `/api/:path*` → `https://segsoft-icesi.westus3.cloudapp.azure.com/api/:path*`, antes de la regla de la SPA |
 | VM | Azure for Students, VM `segsoft`, región **West US 3**, `Standard_B2als_v2` (2 vCPU, 4 GB, x64), Ubuntu 24.04, disco Standard SSD de 30 GB, 2 GB de swap, usuario SSH `Segsoft` |
 | Nombre del backend | *DNS name label* `segsoft-icesi` de la IP pública `segsoft-ip` (estática, 20.168.55.230). Caddy obtiene el certificado de Let's Encrypt para ese nombre |
@@ -97,6 +97,24 @@ Azure bloquea la salida por el puerto 25, pero no el 587 que usa Brevo. Si un co
 **Actualizar el backend o el motor** (después de llevar los cambios de p2tools al espejo de GitHub):
 `ssh Segsoft@20.168.55.230`, y en `/opt/segsoft/segsoft-backend/deploy`:
 `git -C .. pull && git -C ../../segsoft-motorpython pull && docker compose up -d --build`.
+
+**IP real de los usuarios.** Detrás de Vercel y Caddy el backend solo ve la IP de Vercel, la misma
+para muchos usuarios: la auditoría no dice desde dónde se hizo algo y los límites por IP se
+comparten. El middleware de Vercel (`middleware.ts` del frontend) envía la IP real junto con un
+secreto que el backend comprueba; sin el secreto el backend ignora esa IP, así que quien llame
+directamente al servidor no puede inventarla. Para activarlo:
+
+1. En la VM, generar el secreto y agregarlo al `.env` (no lo pegues en chats ni lo subas a git):
+   `echo "TRUSTED_PROXY_SECRET=$(openssl rand -hex 32)" >> .env`, y `grep TRUSTED_PROXY_SECRET .env`
+   para copiarlo.
+2. En Vercel, *Settings → Environment Variables*: `PROXY_SECRET` con el mismo valor, entorno
+   *Production*, tipo *Sensitive*.
+3. `docker compose up -d backend` y, en Vercel, *Deployments → Redeploy* del último despliegue.
+4. Comprobar: iniciar sesión y mirar la última fila de
+   `docker compose exec -T postgres psql -U segsoft segsoft -c "SELECT timestamp, event_type, ip_address FROM auth_audit_log ORDER BY timestamp DESC LIMIT 3;"`:
+   debe salir la IP pública de quien entró, no una de AWS (`3.x`, `18.x`, `54.x`, `100.x`).
+
+Si el secreto falta en un lado, todo sigue funcionando como antes, con la IP de Vercel.
 
 **Límite conocido:** las subidas pasan por el proxy de Vercel, cuyo límite de tamaño no está
 documentado. Los ZIP de prueba (unos 20 KB) pasan; uno cercano a los 100 MB podría fallar. Con

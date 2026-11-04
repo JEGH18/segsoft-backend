@@ -16,8 +16,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * which is expensive, and reveals whether a username exists), and every created account counts
  * against a global hourly cap.
  *
- * <p>The client IP comes from X-Forwarded-For, which a caller can forge, so the per-IP limit only
- * slows down casual abuse; the global cap is the hard limit on account creation.
+ * <p>The client IP comes from {@link co.icesi.pdgseg.security.ClientIpResolver}. Outside the
+ * trusted proxy it can still be shared or rotated, so the per-IP limit only slows down casual
+ * abuse; the global cap is the hard limit on account creation.
  */
 @Component
 public class RegistrationRateLimiter {

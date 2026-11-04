@@ -1,7 +1,9 @@
 package co.icesi.pdgseg.repository;
 
 import co.icesi.pdgseg.entity.AccountUnlockToken;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -12,6 +14,11 @@ import java.util.UUID;
 
 public interface AccountUnlockTokenRepository extends JpaRepository<AccountUnlockToken, UUID> {
 
+    /**
+     * Locks the row (SELECT ... FOR UPDATE) until the transaction ends: two requests with the same
+     * link, such as a mail scanner opening it twice at once, cannot both find it unused.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<AccountUnlockToken> findByTokenHash(String tokenHash);
 
     /** Invalidates the pending links of a user, so only the one of the current lock works. */

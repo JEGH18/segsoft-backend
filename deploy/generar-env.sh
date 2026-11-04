@@ -43,6 +43,8 @@ JWT_SECRET=$(random 48)
 INTERNAL_SERVICE_TOKEN=$(random 48)
 SEGSOFT_ACCOUNTS=$ACCOUNTS
 APP_PUBLIC_URL=$FRONTEND_ORIGIN
+# Cópialo también en Vercel como PROXY_SECRET (variable de entorno del proyecto del frontend).
+TRUSTED_PROXY_SECRET=$(random 48)
 # Correo de verificación del registro (Brevo, SMTP): MAIL_HOST=smtp-relay.brevo.com, y en
 # MAIL_USERNAME y MAIL_PASSWORD el "SMTP login" y una "SMTP key" de Brevo. Mientras MAIL_HOST esté
 # vacío, el registro de cuentas responde 503 (las cuentas de SEGSOFT_ACCOUNTS funcionan igual).

@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.security.ClientIpResolver;
 import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.response.ReportResponse;
@@ -30,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** POST /api/v1/analyses/{id}/reports */
 @WebMvcTest(AnalysisReportController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, ClientIpResolver.class})
 class AnalysisReportControllerTest {
 
     @Autowired MockMvc mockMvc;

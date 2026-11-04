@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.security.ClientIpResolver;
 import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.response.PolicyResponse;
@@ -33,7 +34,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(PolicyController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, ClientIpResolver.class})
 class PolicyControllerTest {
 
     @Autowired MockMvc mockMvc;

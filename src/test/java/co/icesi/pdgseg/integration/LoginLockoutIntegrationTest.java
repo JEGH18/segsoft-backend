@@ -16,8 +16,14 @@ import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -321,6 +327,55 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
         getAs(accessToken, "/api/v1/auth/me")
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.errorCode").value("SESSION_REVOKED"));
+    }
+
+    /** Sends the same POST {@code times} times at once and returns the status codes. */
+    private List<Integer> sendAtOnce(int times, String path, Map<String, String> body) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(times);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Integer>> results = new ArrayList<>();
+            for (int i = 0; i < times; i++) {
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return postJson(path, body).andReturn().getResponse().getStatus();
+                }));
+            }
+            start.countDown();
+            List<Integer> statuses = new ArrayList<>();
+            for (Future<Integer> result : results) {
+                statuses.add(result.get(30, TimeUnit.SECONDS));
+            }
+            return statuses;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void anUnlockLinkOpenedSeveralTimesAtOnce_isUsedOnlyOnce() throws Exception {
+        // As a mail scanner did in production: two ACCOUNT_UNLOCKED in the same millisecond.
+        String username = newAccountWithVerifiedEmail();
+        failFourTimes(username);
+        login(username, WRONG_PASSWORD).andExpect(status().isLocked());
+
+        List<Integer> statuses = sendAtOnce(8, "/api/v1/auth/unlock",
+                Map.of("token", unlockEmails(username).get(0).token()));
+
+        assertThat(statuses).containsOnly(200, 400).filteredOn(s -> s == 200).hasSize(1);
+        assertThat(audited(username, "ACCOUNT_UNLOCKED")).isEqualTo(1);
+        assertThat(locked(username)).isFalse();
+    }
+
+    @Test
+    void aVerificationLinkOpenedSeveralTimesAtOnce_startsOnlyOneSession() throws Exception {
+        String username = "lockc" + Long.toString(System.nanoTime(), 36);
+        String token = registerAndGetVerificationToken(username);
+
+        List<Integer> statuses = sendAtOnce(8, "/api/v1/auth/verify-email", Map.of("token", token));
+
+        assertThat(statuses).containsOnly(200, 400).filteredOn(s -> s == 200).hasSize(1);
+        assertThat(audited(username, "EMAIL_VERIFIED")).isEqualTo(1);
     }
 
     @Test

@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.security.ClientIpResolver;
 import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.config.WebMvcConfig;
@@ -39,7 +40,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(RuleController.class)
-@Import({SecurityConfig.class, WebMvcConfig.class, RateLimitInterceptor.class})
+@Import({SecurityConfig.class, WebMvcConfig.class, RateLimitInterceptor.class, ClientIpResolver.class})
 class RuleControllerTest {
 
     @Autowired MockMvc mockMvc;

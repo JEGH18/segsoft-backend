@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.security.ClientIpResolver;
 import co.icesi.pdgseg.dto.request.LoginRequest;
 import co.icesi.pdgseg.dto.request.RegisterRequest;
 import co.icesi.pdgseg.dto.request.ResendVerificationRequest;
@@ -49,15 +50,18 @@ public class AuthController {
     private final RegistrationService registrationService;
     private final EmailVerificationService emailVerificationService;
     private final AccountUnlockService accountUnlockService;
+    private final ClientIpResolver clientIpResolver;
 
     public AuthController(AuthService authService,
                           RegistrationService registrationService,
                           EmailVerificationService emailVerificationService,
-                          AccountUnlockService accountUnlockService) {
+                          AccountUnlockService accountUnlockService,
+                          ClientIpResolver clientIpResolver) {
         this.authService = authService;
         this.registrationService = registrationService;
         this.emailVerificationService = emailVerificationService;
         this.accountUnlockService = accountUnlockService;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @PostMapping("/register")
@@ -185,10 +189,6 @@ public class AuthController {
     }
 
     private String resolveIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (StringUtils.hasText(forwarded)) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 }

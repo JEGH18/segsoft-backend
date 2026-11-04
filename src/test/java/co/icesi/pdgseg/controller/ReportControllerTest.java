@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.security.ClientIpResolver;
 import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.report.ExportedReport;
@@ -60,7 +61,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * the behavior behind it.
  */
 @WebMvcTest(ReportController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, ClientIpResolver.class})
 class ReportControllerTest {
 
     private static final byte[] PDF_BYTES = "%PDF-1.4 fake".getBytes();

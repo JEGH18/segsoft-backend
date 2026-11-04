@@ -75,6 +75,9 @@ auth:
 # Public URL of the frontend; the verification links point to it, never to the request's Host.
 app:
   public-url: ${APP_PUBLIC_URL:http://localhost:5173}
+  # Shared with the Vercel middleware, which sends it with the real client IP (ClientIpResolver).
+  # Empty: that header is ignored and the IP is the one Caddy saw.
+  trusted-proxy-secret: ${TRUSTED_PROXY_SECRET:}
 
 engine:
   base-url: ${ENGINE_BASE_URL:http://localhost:18001}

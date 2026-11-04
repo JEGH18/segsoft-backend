@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.filter;
 
+import co.icesi.pdgseg.security.ClientIpResolver;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
@@ -19,6 +20,11 @@ public class RateLimitInterceptor implements HandlerInterceptor {
 
     private static final int LIMIT_PER_MINUTE = 60;
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final ClientIpResolver clientIpResolver;
+
+    public RateLimitInterceptor(ClientIpResolver clientIpResolver) {
+        this.clientIpResolver = clientIpResolver;
+    }
 
     private Bucket getBucket(String key) {
         return buckets.computeIfAbsent(key, k -> Bucket.builder()
@@ -32,7 +38,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
                              HttpServletResponse response,
                              Object handler) throws Exception {
 
-        String ip = request.getRemoteAddr();
+        // Not getRemoteAddr(): behind Caddy that is Caddy's address, shared by every caller.
+        String ip = clientIpResolver.resolve(request);
         String user = (request.getUserPrincipal() != null)
             ? request.getUserPrincipal().getName()
             : "anonymous";
