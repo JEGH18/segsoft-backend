@@ -94,6 +94,29 @@ public class GlobalExceptionHandler {
         return errorBody(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Credenciales inválidas");
     }
 
+    @ExceptionHandler(InvalidLoginException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidLogin(InvalidLoginException ex) {
+        ResponseEntity<Map<String, Object>> response =
+                errorBody(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", ex.getMessage());
+        if (ex.getAttemptsLeft() != null) {
+            response.getBody().put("attemptsLeft", ex.getAttemptsLeft());
+        }
+        return response;
+    }
+
+    @ExceptionHandler(AccountLockedException.class)
+    public ResponseEntity<Map<String, Object>> handleAccountLocked(AccountLockedException ex) {
+        ResponseEntity<Map<String, Object>> response =
+                errorBody(HttpStatus.LOCKED, "ACCOUNT_LOCKED", ex.getMessage());
+        response.getBody().put("minutesLeft", ex.getMinutesLeft());
+        return response;
+    }
+
+    @ExceptionHandler(InvalidUnlockTokenException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidUnlockToken(InvalidUnlockTokenException ex) {
+        return errorBody(HttpStatus.BAD_REQUEST, "INVALID_UNLOCK_TOKEN", ex.getMessage());
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
         String username = Optional.ofNullable(SecurityContextHolder.getContext().getAuthentication())

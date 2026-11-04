@@ -352,6 +352,6 @@ class RegistrationIntegrationTest extends PostgreSQLContainerBase {
 
         login(username, PASSWORD)
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("Credenciales inválidas"));
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.startsWith("Credenciales inválidas")));
     }
 }

@@ -78,7 +78,7 @@ class AuthControllerIntegrationTest extends PostgreSQLContainerBase {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("Credenciales inválidas"));
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.startsWith("Credenciales inválidas")));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.integration;
 
+import co.icesi.pdgseg.service.AccountUnlockRequested;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -8,9 +9,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,8 +23,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Brute-force protection against PostgreSQL: a failed login is rejected with an exception, and
- * what the login stored before throwing (the failed attempts, the lock, the audit) must survive it.
+ * Brute-force protection against PostgreSQL: each failed login warns how many attempts are left,
+ * the fifth locks the account for 30 minutes and emails an unlock link to its verified email, and
+ * what the login stored before rejecting (attempts, lock, link, audit) survives the rejection.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -28,10 +33,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 "jwt.secret=integration-test-secret-minimum-32-characters-ok",
                 "jwt.access-token-expiration-ms=900000",
                 "jwt.refresh-token-expiration-ms=28800000",
-                "cors.allowed-origins=http://localhost:5173"
+                "cors.allowed-origins=http://localhost:5173",
+                // No SMTP in the tests: the link goes to the log and the token comes from the event.
+                "auth.email-verification.log-links=true"
         }
 )
 @AutoConfigureMockMvc
+@RecordApplicationEvents
 class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
 
     private static final String PASSWORD = "Bloqueo-Prueba-2026!";
@@ -41,6 +49,7 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private ApplicationEvents events;
 
     /** A DEVELOPER without email, like the deployment accounts, unique per run. */
     private String newAccount() {
@@ -54,15 +63,39 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
         return username;
     }
 
-    private ResultActions login(String username, String password) throws Exception {
-        return mockMvc.perform(post("/api/v1/auth/login")
+    /** A DEVELOPER with a verified email, like a self-registered account. */
+    private String newAccountWithVerifiedEmail() {
+        String username = newAccount();
+        jdbcTemplate.update("UPDATE users SET email = ?, email_verified_at = now() WHERE username = ?",
+                username + "@example.com", username);
+        return username;
+    }
+
+    private ResultActions postJson(String path, Map<String, String> body) throws Exception {
+        return mockMvc.perform(post(path)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(Map.of("username", username, "password", password))));
+                .content(objectMapper.writeValueAsString(body)));
+    }
+
+    private ResultActions login(String username, String password) throws Exception {
+        return postJson("/api/v1/auth/login", Map.of("username", username, "password", password));
+    }
+
+    private void failFourTimes(String username) throws Exception {
+        for (int i = 0; i < 4; i++) {
+            login(username, WRONG_PASSWORD).andExpect(status().isUnauthorized());
+        }
     }
 
     private int failedAttempts(String username) {
         return jdbcTemplate.queryForObject("SELECT failed_attempts FROM users WHERE username = ?",
                 Integer.class, username);
+    }
+
+    private boolean locked(String username) {
+        return jdbcTemplate.queryForObject(
+                "SELECT locked_until IS NOT NULL AND locked_until > now() FROM users WHERE username = ?",
+                Boolean.class, username);
     }
 
     private int audited(String username, String eventType) {
@@ -71,35 +104,105 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
                 Integer.class, username, eventType);
     }
 
+    private List<AccountUnlockRequested> unlockEmails(String username) {
+        return events.stream(AccountUnlockRequested.class)
+                .filter(event -> event.username().equals(username))
+                .toList();
+    }
+
     @Test
-    void eachWrongPasswordIsCountedAndAudited() throws Exception {
+    void eachWrongPasswordIsCounted_audited_andSaysHowManyAttemptsAreLeft() throws Exception {
         String username = newAccount();
 
-        login(username, WRONG_PASSWORD).andExpect(status().isUnauthorized());
-        login(username, WRONG_PASSWORD).andExpect(status().isUnauthorized());
+        login(username, WRONG_PASSWORD)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.attemptsLeft").value(4))
+                .andExpect(jsonPath("$.message").value(
+                        "Credenciales inválidas. Te quedan 4 intentos antes de que la cuenta se bloquee durante 30 minutos."));
+        login(username, WRONG_PASSWORD).andExpect(jsonPath("$.attemptsLeft").value(3));
 
         assertThat(failedAttempts(username)).isEqualTo(2);
         assertThat(audited(username, "LOGIN_FAILURE")).isEqualTo(2);
     }
 
     @Test
-    void fiveWrongPasswordsLockTheAccount_evenForTheRightPassword() throws Exception {
-        String username = newAccount();
+    void theFifthWrongPasswordLocksTheAccount_andEmailsAnUnlockLinkThatLiftsIt() throws Exception {
+        String username = newAccountWithVerifiedEmail();
+        failFourTimes(username);
 
-        for (int i = 0; i < 5; i++) {
-            login(username, WRONG_PASSWORD).andExpect(status().isUnauthorized());
-        }
-
-        Boolean locked = jdbcTemplate.queryForObject(
-                "SELECT locked_until > now() + interval '25 minutes' FROM users WHERE username = ?",
-                Boolean.class, username);
-        assertThat(locked).isTrue();
-
-        // Same answer as a wrong password, so the lock does not reveal that the account exists.
-        login(username, PASSWORD)
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("Credenciales inválidas"));
+        login(username, WRONG_PASSWORD)
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_LOCKED"))
+                .andExpect(jsonPath("$.minutesLeft").value(30))
+                .andExpect(jsonPath("$.message").value("Demasiados intentos fallidos: la cuenta quedó bloqueada "
+                        + "durante 30 minutos. Te enviamos un correo con un enlace para desbloquearla."));
+        assertThat(locked(username)).isTrue();
         assertThat(audited(username, "ACCOUNT_LOCKED")).isEqualTo(1);
+
+        List<AccountUnlockRequested> sent = unlockEmails(username);
+        assertThat(sent).hasSize(1);
+        assertThat(sent.get(0).email()).isEqualTo(username + "@example.com");
+        String token = sent.get(0).token();
+        List<String> hashes = jdbcTemplate.queryForList("""
+                SELECT t.token_hash FROM account_unlock_tokens t JOIN users u ON u.id = t.user_id
+                WHERE u.username = ?
+                """, String.class, username);
+        assertThat(hashes).hasSize(1).doesNotContain(token);
+
+        // While locked, even the right password is refused, and no other email is sent.
+        login(username, PASSWORD)
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(
+                        "usa el enlace que te enviamos por correo")));
+        assertThat(unlockEmails(username)).hasSize(1);
+
+        postJson("/api/v1/auth/unlock", Map.of("token", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Tu cuenta quedó desbloqueada. Ya puedes iniciar sesión."));
+        assertThat(locked(username)).isFalse();
+        assertThat(audited(username, "ACCOUNT_UNLOCKED")).isEqualTo(1);
+        login(username, PASSWORD).andExpect(status().isOk());
+
+        // The link works only once.
+        postJson("/api/v1/auth/unlock", Map.of("token", token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_UNLOCK_TOKEN"));
+    }
+
+    @Test
+    void anAccountWithoutEmailIsLockedWithoutAnUnlockLink() throws Exception {
+        String username = newAccount();
+        failFourTimes(username);
+
+        login(username, WRONG_PASSWORD)
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.message").value("Demasiados intentos fallidos: la cuenta quedó bloqueada "
+                        + "durante 30 minutos. Intenta de nuevo cuando termine el bloqueo."));
+        assertThat(unlockEmails(username)).isEmpty();
+
+        login(username, PASSWORD)
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.minutesLeft").value(30))
+                .andExpect(jsonPath("$.message").value("La cuenta está bloqueada por demasiados intentos "
+                        + "fallidos. Intenta de nuevo en 30 minutos."));
+    }
+
+    @Test
+    void anExpiredUnlockLinkIsRejected() throws Exception {
+        String username = newAccountWithVerifiedEmail();
+        failFourTimes(username);
+        login(username, WRONG_PASSWORD).andExpect(status().isLocked());
+        jdbcTemplate.update("""
+                UPDATE account_unlock_tokens SET expires_at = now() - interval '1 minute'
+                WHERE user_id = (SELECT id FROM users WHERE username = ?)
+                """, username);
+
+        postJson("/api/v1/auth/unlock", Map.of("token", unlockEmails(username).get(0).token()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_UNLOCK_TOKEN"));
+        postJson("/api/v1/auth/unlock", Map.of("token", "token-inventado"))
+                .andExpect(status().isBadRequest());
+        assertThat(locked(username)).isTrue();
     }
 
     @Test
@@ -115,10 +218,14 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
     }
 
     @Test
-    void anUnknownUserIsAudited() throws Exception {
+    void anUnknownUserIsAudited_andWarnedWithoutACount() throws Exception {
         String username = "nadie" + Long.toString(System.nanoTime(), 36);
 
-        login(username, WRONG_PASSWORD).andExpect(status().isUnauthorized());
+        login(username, WRONG_PASSWORD)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.attemptsLeft").doesNotExist())
+                .andExpect(jsonPath("$.message").value("Credenciales inválidas. Después de 5 intentos fallidos, "
+                        + "la cuenta se bloquea durante 30 minutos."));
 
         assertThat(audited(username, "LOGIN_FAILURE")).isEqualTo(1);
     }

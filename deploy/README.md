@@ -171,6 +171,7 @@ Entrar en `https://app.<dominio>` con `admin` y analizar los tres ZIP de
 | Respaldo de la base de datos | `docker compose exec -T postgres pg_dump -U segsoft segsoft > respaldo-$(date +%F).sql` |
 | Restaurar un respaldo | `docker compose exec -T postgres psql -U segsoft segsoft < respaldo.sql` |
 | Borrar todo, incluidos los datos | `docker compose down -v` |
+| Desbloquear una cuenta (5 intentos fallidos la bloquean 30 minutos; las que tienen correo verificado reciben un enlace) | `docker compose exec -T postgres psql -U segsoft segsoft -c "UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE username = '<usuario>';"` |
 
 **Cambiar contraseñas o cuentas:** editar `SEGSOFT_ACCOUNTS` en `deploy/.env`
 (`usuario:ROL:contraseña`, separadas por `;`; roles `DEVELOPER`, `AUDITOR` o `SECURITY_ADMIN`;

@@ -3,11 +3,13 @@ package co.icesi.pdgseg.controller;
 import co.icesi.pdgseg.dto.request.LoginRequest;
 import co.icesi.pdgseg.dto.request.RegisterRequest;
 import co.icesi.pdgseg.dto.request.ResendVerificationRequest;
+import co.icesi.pdgseg.dto.request.UnlockAccountRequest;
 import co.icesi.pdgseg.dto.request.VerifyEmailRequest;
 import co.icesi.pdgseg.dto.response.AuthResponse;
 import co.icesi.pdgseg.dto.response.RegistrationResponse;
 import co.icesi.pdgseg.dto.response.UserResponse;
 import co.icesi.pdgseg.exception.AuthException;
+import co.icesi.pdgseg.service.AccountUnlockService;
 import co.icesi.pdgseg.service.AuthService;
 import co.icesi.pdgseg.service.EmailVerificationService;
 import co.icesi.pdgseg.service.RegistrationService;
@@ -46,13 +48,16 @@ public class AuthController {
     private final AuthService authService;
     private final RegistrationService registrationService;
     private final EmailVerificationService emailVerificationService;
+    private final AccountUnlockService accountUnlockService;
 
     public AuthController(AuthService authService,
                           RegistrationService registrationService,
-                          EmailVerificationService emailVerificationService) {
+                          EmailVerificationService emailVerificationService,
+                          AccountUnlockService accountUnlockService) {
         this.authService = authService;
         this.registrationService = registrationService;
         this.emailVerificationService = emailVerificationService;
+        this.accountUnlockService = accountUnlockService;
     }
 
     @PostMapping("/register")
@@ -90,6 +95,17 @@ public class AuthController {
         emailVerificationService.resend(request.email(), resolveIp(httpRequest));
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("message",
                 "Si el correo pertenece a una cuenta sin verificar, te enviamos un enlace nuevo."));
+    }
+
+    @PostMapping("/unlock")
+    @Operation(summary = "Desbloquear una cuenta",
+               description = "Consume el token del enlace que se envía al correo verificado de una cuenta cuando se "
+                       + "bloquea por intentos fallidos, y levanta el bloqueo. No inicia sesión: después hay que "
+                       + "entrar con la contraseña. 400 si el token no es válido, ya se usó o venció.")
+    public ResponseEntity<Map<String, String>> unlock(@Valid @RequestBody UnlockAccountRequest request,
+                                                      HttpServletRequest httpRequest) {
+        accountUnlockService.unlock(request.token(), resolveIp(httpRequest));
+        return ResponseEntity.ok(Map.of("message", "Tu cuenta quedó desbloqueada. Ya puedes iniciar sesión."));
     }
 
     @GetMapping("/registration")

@@ -14,10 +14,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.Base64;
 import java.util.Locale;
 import java.util.Map;
 
@@ -32,15 +30,13 @@ public class EmailVerificationService {
 
     /** A new link is not sent if the previous one is younger than this, so the inbox cannot be flooded. */
     static final Duration RESEND_COOLDOWN = Duration.ofMinutes(1);
-    private static final int TOKEN_BYTES = 32;
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final EmailVerificationTokenRepository tokenRepository;
     private final UserRepository userRepository;
     private final AuthService authService;
     private final AuditService auditService;
     private final RegistrationRateLimiter rateLimiter;
-    private final VerificationMailer mailer;
+    private final AuthMailer mailer;
     private final ApplicationEventPublisher eventPublisher;
     private final Duration tokenTtl;
     private final Duration unverifiedRetention;
@@ -50,7 +46,7 @@ public class EmailVerificationService {
                                     AuthService authService,
                                     AuditService auditService,
                                     RegistrationRateLimiter rateLimiter,
-                                    VerificationMailer mailer,
+                                    AuthMailer mailer,
                                     ApplicationEventPublisher eventPublisher,
                                     @Value("${auth.email-verification.token-ttl:PT24H}") Duration tokenTtl,
                                     @Value("${auth.email-verification.unverified-retention:P7D}") Duration unverifiedRetention) {
@@ -80,15 +76,15 @@ public class EmailVerificationService {
     public void issue(User user) {
         OffsetDateTime now = OffsetDateTime.now();
         tokenRepository.invalidatePending(user.getId(), now);
-        String token = newToken();
-        tokenRepository.save(new EmailVerificationToken(user, ReportChecksum.sha256Hex(token), now.plus(tokenTtl)));
+        String token = OneTimeTokens.newToken();
+        tokenRepository.save(new EmailVerificationToken(user, OneTimeTokens.hash(token), now.plus(tokenTtl)));
         eventPublisher.publishEvent(new VerificationEmailRequested(user.getUsername(), user.getEmail(), token));
     }
 
     /** Consumes the link, marks the email as verified and starts the session of its account. */
     @Transactional
     public AuthResponse verify(String token, String ipAddress) {
-        EmailVerificationToken stored = tokenRepository.findByTokenHash(ReportChecksum.sha256Hex(token.trim()))
+        EmailVerificationToken stored = tokenRepository.findByTokenHash(OneTimeTokens.hash(token))
                 .orElseThrow(InvalidVerificationTokenException::new);
         User user = stored.getUser();
         OffsetDateTime now = OffsetDateTime.now();
@@ -141,11 +137,5 @@ public class EmailVerificationService {
 
     static String normalizeEmail(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
-    }
-
-    private static String newToken() {
-        byte[] bytes = new byte[TOKEN_BYTES];
-        RANDOM.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 }

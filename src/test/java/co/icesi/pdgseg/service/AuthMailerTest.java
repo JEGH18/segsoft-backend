@@ -23,16 +23,16 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class VerificationMailerTest {
+class AuthMailerTest {
 
     private static final VerificationEmailRequested EVENT =
             new VerificationEmailRequested("juan", "juan@example.com", "abc_DEF-123");
 
     @SuppressWarnings("unchecked")
-    private static VerificationMailer mailer(JavaMailSender sender, String host, boolean logLinks) {
+    private static AuthMailer mailer(JavaMailSender sender, String host, boolean logLinks) {
         ObjectProvider<JavaMailSender> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(sender);
-        return new VerificationMailer(provider, host, "no-reply@segsoft.website", "SegSoft",
+        return new AuthMailer(provider, host, "no-reply@segsoft.website", "SegSoft",
                 "https://www.segsoft.website/", Duration.ofHours(24), logLinks);
     }
 
@@ -78,9 +78,27 @@ class VerificationMailerTest {
     }
 
     @Test
+    void sendsTheUnlockLinkWhenAnAccountIsLocked() throws Exception {
+        JavaMailSender sender = realMessages();
+
+        mailer(sender, "smtp-relay.brevo.com", false)
+                .send(new AccountUnlockRequested("juan", "juan@example.com", "xyz_789", 5, 30));
+
+        ArgumentCaptor<MimeMessage> sent = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(sender).send(sent.capture());
+        MimeMessage message = sent.getValue();
+        assertThat(message.getRecipients(Message.RecipientType.TO)[0].toString()).isEqualTo("juan@example.com");
+        assertThat(message.getSubject()).isEqualTo("Tu cuenta de SegSoft se bloqueó");
+        assertThat(text(message))
+                .contains("https://www.segsoft.website/unlock-account?token=xyz_789")
+                .contains("5 intentos fallidos")
+                .contains("30 minutos");
+    }
+
+    @Test
     void isUnavailableWithoutAnSmtpHost_evenIfSpringCreatedTheSender() {
         JavaMailSender sender = realMessages();
-        VerificationMailer mailer = mailer(sender, "", false);
+        AuthMailer mailer = mailer(sender, "", false);
 
         assertThat(mailer.isAvailable()).isFalse();
         mailer.send(EVENT);

@@ -39,7 +39,7 @@ class EmailVerificationServiceTest {
     private AuthService authService;
     private AuditService auditService;
     private RegistrationRateLimiter rateLimiter;
-    private VerificationMailer mailer;
+    private AuthMailer mailer;
     private ApplicationEventPublisher eventPublisher;
     private EmailVerificationService service;
 
@@ -50,7 +50,7 @@ class EmailVerificationServiceTest {
         authService = mock(AuthService.class);
         auditService = mock(AuditService.class);
         rateLimiter = mock(RegistrationRateLimiter.class);
-        mailer = mock(VerificationMailer.class);
+        mailer = mock(AuthMailer.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
         when(mailer.isAvailable()).thenReturn(true);
         when(authService.startSession(any(User.class)))

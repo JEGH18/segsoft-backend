@@ -5,7 +5,9 @@ import co.icesi.pdgseg.dto.response.AuthResponse;
 import co.icesi.pdgseg.entity.Role;
 import co.icesi.pdgseg.entity.User;
 import co.icesi.pdgseg.entity.enums.RoleType;
+import co.icesi.pdgseg.exception.AccountLockedException;
 import co.icesi.pdgseg.exception.AuthException;
+import co.icesi.pdgseg.exception.InvalidLoginException;
 import co.icesi.pdgseg.repository.RefreshTokenBlacklistRepository;
 import co.icesi.pdgseg.repository.UserRepository;
 import co.icesi.pdgseg.security.JwtTokenProvider;
@@ -36,13 +38,14 @@ class AuthServiceTest {
     @Mock private JwtTokenProvider jwtTokenProvider;
     @Mock private RefreshTokenBlacklistRepository blacklistRepository;
     @Mock private AuditService auditService;
+    @Mock private AccountUnlockService accountUnlockService;
 
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         authService = new AuthService(userRepository, passwordEncoder, jwtTokenProvider,
-                blacklistRepository, auditService);
+                blacklistRepository, auditService, accountUnlockService);
     }
 
     private User buildUser(String username) {
@@ -74,41 +77,76 @@ class AuthServiceTest {
     }
 
     @Test
-    void login_unknownUser_throwsWithGenericMessage() {
+    void login_unknownUser_throwsWithGenericMessageAndTheLockWarning() {
         when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("ghost", "x"), "1.2.3.4"))
-                .isInstanceOf(AuthException.class)
-                .hasMessage("Credenciales inválidas");
+                .isInstanceOfSatisfying(InvalidLoginException.class, e -> assertThat(e.getAttemptsLeft()).isNull())
+                .hasMessage("Credenciales inválidas. Después de 5 intentos fallidos, la cuenta se bloquea "
+                        + "durante 30 minutos.");
     }
 
     @Test
-    void login_wrongPassword_throwsWithGenericMessage() {
+    void login_wrongPassword_saysHowManyAttemptsAreLeft() {
         User user = buildUser("alice");
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "wrong"), "1.2.3.4"))
-                .isInstanceOf(AuthException.class)
-                .hasMessage("Credenciales inválidas");
+                .isInstanceOfSatisfying(InvalidLoginException.class, e -> assertThat(e.getAttemptsLeft()).isEqualTo(4))
+                .hasMessage("Credenciales inválidas. Te quedan 4 intentos antes de que la cuenta se bloquee "
+                        + "durante 30 minutos.");
     }
 
     @Test
-    void login_fiveFailuresWithinWindow_locksAccount() {
+    void login_fourthFailure_warnsThatOneAttemptIsLeft() {
+        User user = buildUser("alice");
+        user.setFailedAttempts(3);
+        user.setLastFailedAt(OffsetDateTime.now().minusMinutes(1));
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "wrong"), "1.2.3.4"))
+                .hasMessageContaining("Te queda 1 intento antes");
+        verifyNoInteractions(accountUnlockService);
+    }
+
+    @Test
+    void login_fiveFailuresWithinWindow_locksAccount_andEmailsTheUnlockLink() {
         User user = buildUser("alice");
         user.setFailedAttempts(4);
         user.setLastFailedAt(OffsetDateTime.now().minusMinutes(2)); // within 10-min window
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        when(accountUnlockService.issue(user, 5)).thenReturn(true);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "bad"), "1.2.3.4"))
-                .isInstanceOf(AuthException.class);
+                .isInstanceOfSatisfying(AccountLockedException.class, e -> assertThat(e.getMinutesLeft()).isEqualTo(30))
+                .hasMessage("Demasiados intentos fallidos: la cuenta quedó bloqueada durante 30 minutos. "
+                        + "Te enviamos un correo con un enlace para desbloquearla.");
 
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(captor.capture());
         User saved = captor.getValue();
         assertThat(saved.getLockedUntil()).isNotNull();
         assertThat(saved.getLockedUntil()).isAfter(OffsetDateTime.now());
+        verify(accountUnlockService).issue(user, 5);
+        verify(auditService).record(eq("ACCOUNT_LOCKED"), eq("alice"), eq("1.2.3.4"), anyMap());
+    }
+
+    @Test
+    void login_lockOfAnAccountWithoutEmail_doesNotMentionAnEmail() {
+        User user = buildUser("admin");
+        user.setFailedAttempts(4);
+        user.setLastFailedAt(OffsetDateTime.now().minusMinutes(2));
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        when(accountUnlockService.issue(user, 5)).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("admin", "bad"), "1.2.3.4"))
+                .isInstanceOf(AccountLockedException.class)
+                .hasMessage("Demasiados intentos fallidos: la cuenta quedó bloqueada durante 30 minutos. "
+                        + "Intenta de nuevo cuando termine el bloqueo.");
     }
 
     @Test
@@ -120,7 +158,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "bad"), "1.2.3.4"))
-                .isInstanceOf(AuthException.class);
+                .isInstanceOf(InvalidLoginException.class);
 
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(captor.capture());
@@ -130,14 +168,18 @@ class AuthServiceTest {
     }
 
     @Test
-    void login_lockedAccount_throwsGenericMessage() {
+    void login_lockedAccount_saysHowLongItStaysLocked_withoutCheckingThePassword() {
         User user = buildUser("alice");
-        user.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+        user.setEmail("alice@example.com");
+        user.setEmailVerifiedAt(OffsetDateTime.now().minusDays(1));
+        user.setLockedUntil(OffsetDateTime.now().plusMinutes(15).minusSeconds(30));
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "x"), "1.2.3.4"))
-                .isInstanceOf(AuthException.class)
-                .hasMessage("Credenciales inválidas");
+                .isInstanceOfSatisfying(AccountLockedException.class, e -> assertThat(e.getMinutesLeft()).isEqualTo(15))
+                .hasMessage("La cuenta está bloqueada por demasiados intentos fallidos. Intenta de nuevo en "
+                        + "15 minutos o usa el enlace que te enviamos por correo para desbloquearla.");
+        verifyNoInteractions(passwordEncoder, accountUnlockService);
     }
 
     @Test
