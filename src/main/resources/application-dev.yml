@@ -22,6 +22,11 @@ engine:
 sandbox:
   root: /tmp/pdgseg-sandbox-dev
 
+# Without MAIL_HOST the verification link is written to the log instead of emailed.
+auth:
+  email-verification:
+    log-links: true
+
 logging:
   level:
     co.icesi.pdgseg: DEBUG

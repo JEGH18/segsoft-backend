@@ -29,7 +29,7 @@ class RegistrationDisabledIntegrationTest extends PostgreSQLContainerBase {
     void register_isForbiddenAndTheStatusSaysSo() throws Exception {
         mockMvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"nadie\",\"password\":\"Registro-Prueba-2026!\"}"))
+                        .content("{\"username\":\"nadie\",\"email\":\"nadie@example.com\",\"password\":\"Registro-Prueba-2026!\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("REGISTRATION_DISABLED"));
 

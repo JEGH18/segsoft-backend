@@ -56,6 +56,12 @@
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
 
+    <!-- Email verification of new accounts (SMTP, e.g. Brevo) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-mail</artifactId>
+    </dependency>
+
     <!-- Actuator -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

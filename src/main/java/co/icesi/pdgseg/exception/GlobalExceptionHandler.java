@@ -133,6 +133,25 @@ public class GlobalExceptionHandler {
         return errorBody(HttpStatus.FORBIDDEN, "REGISTRATION_DISABLED", ex.getMessage());
     }
 
+    /** Only thrown after a correct password, so the email can go back to the client to resend the link. */
+    @ExceptionHandler(EmailNotVerifiedException.class)
+    public ResponseEntity<Map<String, Object>> handleEmailNotVerified(EmailNotVerifiedException ex) {
+        ResponseEntity<Map<String, Object>> response =
+                errorBody(HttpStatus.FORBIDDEN, "EMAIL_NOT_VERIFIED", ex.getMessage());
+        response.getBody().put("email", ex.getEmail());
+        return response;
+    }
+
+    @ExceptionHandler(InvalidVerificationTokenException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidVerificationToken(InvalidVerificationTokenException ex) {
+        return errorBody(HttpStatus.BAD_REQUEST, "INVALID_VERIFICATION_TOKEN", ex.getMessage());
+    }
+
+    @ExceptionHandler(EmailDeliveryUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleEmailDeliveryUnavailable(EmailDeliveryUnavailableException ex) {
+        return errorBody(HttpStatus.SERVICE_UNAVAILABLE, "EMAIL_DELIVERY_UNAVAILABLE", ex.getMessage());
+    }
+
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<Map<String, Object>> handleConflict(ConflictException ex) {
         return errorBody(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage());

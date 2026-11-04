@@ -26,6 +26,23 @@ spring:
   security:
     user:
       name: disabled
+  # SMTP for the verification emails (Brevo: smtp-relay.brevo.com:587, with the SMTP login and
+  # SMTP key of the account). Without MAIL_HOST no email is sent and registration answers 503.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
 
 server:
   port: 8080
@@ -46,6 +63,18 @@ auth:
     enabled: ${SEGSOFT_REGISTRATION_ENABLED:true}
     max-per-ip-per-hour: ${REGISTRATION_MAX_PER_IP_PER_HOUR:20}
     max-per-hour: ${REGISTRATION_MAX_PER_HOUR:100}
+  email-verification:
+    from: ${MAIL_FROM:no-reply@segsoft.website}
+    from-name: SegSoft
+    token-ttl: PT24H
+    # Accounts that never verify their email are deleted after this long, freeing name and email.
+    unverified-retention: P7D
+    # Local development only: writes the verification link to the log when there is no SMTP.
+    log-links: false
+
+# Public URL of the frontend; the verification links point to it, never to the request's Host.
+app:
+  public-url: ${APP_PUBLIC_URL:http://localhost:5173}
 
 engine:
   base-url: ${ENGINE_BASE_URL:http://localhost:18001}
@@ -95,6 +124,9 @@ management:
   health:
     probes:
       enabled: true
+    # An SMTP outage must not mark the backend as down, nor every health check open a connection.
+    mail:
+      enabled: false
 
 logging:
   config: classpath:logback-spring.xml

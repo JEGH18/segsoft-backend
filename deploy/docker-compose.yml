@@ -60,6 +60,14 @@ services:
       SEGSOFT_REGISTRATION_ENABLED: ${SEGSOFT_REGISTRATION_ENABLED:-true}
       REGISTRATION_MAX_PER_IP_PER_HOUR: ${REGISTRATION_MAX_PER_IP_PER_HOUR:-20}
       REGISTRATION_MAX_PER_HOUR: ${REGISTRATION_MAX_PER_HOUR:-100}
+      # Correo de verificación de las cuentas nuevas (Brevo). Sin MAIL_HOST el registro responde 503.
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@segsoft.website}
+      # URL del frontend a la que apuntan los enlaces de verificación.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://www.segsoft.website}
       SANDBOX_ROOT: /tmp/pdgseg-sandbox
     volumes:
       - sandbox:/tmp/pdgseg-sandbox

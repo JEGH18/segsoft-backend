@@ -64,6 +64,33 @@ navegador ─► https://www.segsoft.website                         (Vercel, pr
 `SEGSOFT_REGISTRATION_ENABLED=false` a `deploy/.env` y ejecuta `docker compose up -d backend`
 (detalle y límites en `segsoft-docs/registro-usuarios.md`).
 
+**Correo de verificación (Brevo):** las cuentas registradas deben verificar su correo antes de
+iniciar sesión. El backend envía el enlace por SMTP con [Brevo](https://www.brevo.com), cuyo plan
+gratuito permite 300 correos al día. Mientras `MAIL_HOST` esté vacío, el registro responde 503 y
+no crea cuentas; las de `SEGSOFT_ACCOUNTS` no tienen correo y siguen entrando igual.
+
+1. Crear una cuenta gratuita en Brevo.
+2. *Senders, Domains & Dedicated IPs → Domains → Add a domain*: `segsoft.website`. Brevo muestra
+   los registros DNS (código de verificación TXT, DKIM y DMARC). El DNS de `segsoft.website` está
+   en **Vercel** (*Domains → segsoft.website → DNS Records*); agregarlos ahí y pulsar
+   *Authenticate* en Brevo. Sin esto los correos llegan a spam o Brevo los rechaza.
+3. *SMTP & API → SMTP*: anotar el **SMTP login** (algo como `xxxx@smtp-brevo.com`) y generar una
+   **SMTP key**.
+4. En la VM, agregar a `deploy/.env` (y no subirlo a ningún repositorio):
+
+   ```bash
+   MAIL_HOST=smtp-relay.brevo.com
+   MAIL_PORT=587
+   MAIL_USERNAME=<SMTP login>
+   MAIL_PASSWORD=<SMTP key>
+   MAIL_FROM=no-reply@segsoft.website
+   APP_PUBLIC_URL=https://www.segsoft.website
+   ```
+5. `docker compose up -d backend` (o `--build` si también se actualizó el código).
+
+Azure bloquea la salida por el puerto 25, pero no el 587 que usa Brevo. Si un correo no llega,
+`docker compose logs backend | grep -i "verificación"` muestra si se envió o por qué falló.
+
 **Ver las contraseñas de las cuentas** (en tu terminal, no las compartas por chat):
 `ssh Segsoft@20.168.55.230 'grep SEGSOFT_ACCOUNTS /opt/segsoft/segsoft-backend/deploy/.env'`.
 
@@ -174,5 +201,7 @@ cada arranque.
 | La sesión se pierde al recargar la página | Frontend y backend en dominios distintos (ver arriba) |
 | "Network Error", error de CORS o **403** al registrarse o iniciar sesión | `FRONTEND_ORIGIN` en `.env` no incluye exactamente la URL del frontend (sin `/` final). Pasa al cambiar de dominio: aunque las peticiones vayan por el proxy de Vercel, el navegador envía `Origin` con el dominio nuevo. Agregarlo a la lista (separada por comas) y `docker compose up -d backend` |
 | El backend se reinicia en bucle con "SEGSOFT_ACCOUNTS inválida" | El mensaje dice qué entrada corregir en `.env` |
+| El registro responde 503 "el envío de correos no está configurado" | Falta `MAIL_HOST` en `.env` (ver "Correo de verificación (Brevo)") |
+| El correo de verificación no llega | `docker compose logs backend \| grep -i verificación`. "Authentication failed": `MAIL_USERNAME`/`MAIL_PASSWORD` no son el SMTP login y la SMTP key de Brevo. Si se envió pero no llega: el dominio no está autenticado en Brevo (DNS) o el correo está en spam |
 | Caddy no obtiene el certificado | El DNS de `api.<dominio>` aún no apunta al servidor, o los puertos 80/443 están cerrados |
 | Al recargar `/reports/...` aparece un 404 de Vercel | Falta el `vercel.json` en el despliegue |

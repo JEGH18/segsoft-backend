@@ -42,6 +42,15 @@ DB_PASSWORD=$(random 32)
 JWT_SECRET=$(random 48)
 INTERNAL_SERVICE_TOKEN=$(random 48)
 SEGSOFT_ACCOUNTS=$ACCOUNTS
+APP_PUBLIC_URL=$FRONTEND_ORIGIN
+# Correo de verificación del registro (Brevo, SMTP): MAIL_HOST=smtp-relay.brevo.com, y en
+# MAIL_USERNAME y MAIL_PASSWORD el "SMTP login" y una "SMTP key" de Brevo. Mientras MAIL_HOST esté
+# vacío, el registro de cuentas responde 503 (las cuentas de SEGSOFT_ACCOUNTS funcionan igual).
+MAIL_HOST=
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_FROM=no-reply@segsoft.website
 EOF
 
 echo "Creado deploy/.env (permisos 600). Cuentas para los probadores:"

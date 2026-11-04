@@ -32,4 +32,16 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /** Sends the verification emails, so a slow SMTP server never delays a registration. */
+    @Bean(name = "mailExecutor")
+    public Executor mailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("mail-");
+        executor.initialize();
+        return executor;
+    }
 }

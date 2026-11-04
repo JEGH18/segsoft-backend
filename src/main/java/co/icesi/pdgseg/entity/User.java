@@ -20,6 +20,13 @@ public class User {
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
+    /** Null for the deployment accounts (SEGSOFT_ACCOUNTS) and for accounts registered before V34. */
+    @Column(length = 254)
+    private String email;
+
+    @Column(name = "email_verified_at")
+    private OffsetDateTime emailVerifiedAt;
+
     @Column(nullable = false)
     private Boolean enabled = true;
 
@@ -53,6 +60,15 @@ public class User {
 
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
+
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+
+    public OffsetDateTime getEmailVerifiedAt() { return emailVerifiedAt; }
+    public void setEmailVerifiedAt(OffsetDateTime emailVerifiedAt) { this.emailVerifiedAt = emailVerifiedAt; }
+
+    /** An account with an email cannot log in until that email is verified. */
+    public boolean isEmailPendingVerification() { return email != null && emailVerifiedAt == null; }
 
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }

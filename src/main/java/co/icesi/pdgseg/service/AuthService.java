@@ -6,6 +6,7 @@ import co.icesi.pdgseg.dto.response.UserResponse;
 import co.icesi.pdgseg.entity.RefreshTokenBlacklist;
 import co.icesi.pdgseg.entity.User;
 import co.icesi.pdgseg.exception.AuthException;
+import co.icesi.pdgseg.exception.EmailNotVerifiedException;
 import co.icesi.pdgseg.repository.RefreshTokenBlacklistRepository;
 import co.icesi.pdgseg.repository.UserRepository;
 import co.icesi.pdgseg.security.JwtTokenProvider;
@@ -84,6 +85,13 @@ public class AuthService {
         user.setLastFailedAt(null);
         userRepository.save(user);
 
+        // Checked after the password, so it does not reveal which accounts are pending verification.
+        if (user.isEmailPendingVerification()) {
+            auditService.record("LOGIN_FAILURE", user.getUsername(), ipAddress,
+                    Map.of("reason", "email_not_verified"));
+            throw new EmailNotVerifiedException(user.getEmail());
+        }
+
         AuthResponse auth = startSession(user);
         auditService.record("LOGIN_SUCCESS", user.getUsername(), ipAddress,
                 Map.of("roles", auth.roles()));
@@ -143,7 +151,7 @@ public class AuthService {
     public UserResponse getCurrentUser(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new AuthException(INVALID_CREDENTIALS));
-        return new UserResponse(user.getId(), user.getUsername(), extractRoleNames(user));
+        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), extractRoleNames(user));
     }
 
     // ── private helpers ──────────────────────────────────────────────────────
