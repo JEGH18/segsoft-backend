@@ -1,7 +1,9 @@
 package co.icesi.pdgseg.integration;
 
 import co.icesi.pdgseg.service.AccountUnlockRequested;
+import co.icesi.pdgseg.service.VerificationEmailRequested;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -19,6 +21,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -185,6 +188,85 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
                 .andExpect(jsonPath("$.minutesLeft").value(30))
                 .andExpect(jsonPath("$.message").value("La cuenta está bloqueada por demasiados intentos "
                         + "fallidos. Intenta de nuevo en 30 minutos."));
+    }
+
+    /** Registers an account through the API and returns the token of its verification email. */
+    private String registerAndGetVerificationToken(String username) throws Exception {
+        postJson("/api/v1/auth/register", Map.of(
+                "username", username, "email", username + "@example.com", "password", PASSWORD))
+                .andExpect(status().isCreated());
+        List<VerificationEmailRequested> sent = events.stream(VerificationEmailRequested.class)
+                .filter(event -> event.username().equals(username))
+                .toList();
+        assertThat(sent).hasSize(1);
+        return sent.get(0).token();
+    }
+
+    private String lockedUntil(String username) {
+        return jdbcTemplate.queryForObject("SELECT locked_until::text FROM users WHERE username = ?",
+                String.class, username);
+    }
+
+    @Test
+    void anAlreadyUsedVerificationLink_neitherLogsInNorUnlocksALockedAccount() throws Exception {
+        String username = "lockv" + Long.toString(System.nanoTime(), 36);
+        String token = registerAndGetVerificationToken(username);
+        postJson("/api/v1/auth/verify-email", Map.of("token", token)).andExpect(status().isOk());
+        failFourTimes(username);
+        login(username, WRONG_PASSWORD).andExpect(status().isLocked());
+        String lockedUntil = lockedUntil(username);
+
+        postJson("/api/v1/auth/verify-email", Map.of("token", token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_VERIFICATION_TOKEN"))
+                .andExpect(jsonPath("$.accessToken").doesNotExist())
+                .andExpect(cookie().doesNotExist("refresh_token"));
+
+        assertThat(locked(username)).isTrue();
+        assertThat(lockedUntil(username)).isEqualTo(lockedUntil);
+        login(username, PASSWORD).andExpect(status().isLocked());
+    }
+
+    @Test
+    void anUnusedVerificationLink_doesNotStartASessionWhileTheAccountIsLocked() throws Exception {
+        // The password is checked (and failures counted) before the email, so an unverified
+        // account can be locked too.
+        String username = "lockn" + Long.toString(System.nanoTime(), 36);
+        String token = registerAndGetVerificationToken(username);
+        failFourTimes(username);
+        login(username, WRONG_PASSWORD).andExpect(status().isLocked());
+
+        postJson("/api/v1/auth/verify-email", Map.of("token", token))
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_LOCKED"))
+                .andExpect(jsonPath("$.accessToken").doesNotExist())
+                .andExpect(cookie().doesNotExist("refresh_token"));
+        assertThat(locked(username)).isTrue();
+
+        // The link is not used up: it works once the lock is over.
+        jdbcTemplate.update("UPDATE users SET locked_until = now() - interval '1 second' WHERE username = ?",
+                username);
+        postJson("/api/v1/auth/verify-email", Map.of("token", token)).andExpect(status().isOk());
+    }
+
+    @Test
+    void aSessionFromBeforeTheLock_cannotBeRenewedWhileTheAccountIsLocked() throws Exception {
+        String username = newAccountWithVerifiedEmail();
+        Cookie refresh = login(username, PASSWORD).andExpect(status().isOk())
+                .andReturn().getResponse().getCookie("refresh_token");
+        failFourTimes(username);
+        login(username, WRONG_PASSWORD).andExpect(status().isLocked());
+
+        mockMvc.perform(post("/api/v1/auth/refresh").cookie(refresh))
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_LOCKED"))
+                .andExpect(jsonPath("$.accessToken").doesNotExist())
+                .andExpect(cookie().doesNotExist("refresh_token"));
+
+        // Unlocking with the emailed link lets that same session go on.
+        postJson("/api/v1/auth/unlock", Map.of("token", unlockEmails(username).get(0).token()))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/auth/refresh").cookie(refresh)).andExpect(status().isOk());
     }
 
     @Test

@@ -203,6 +203,22 @@ class AuthServiceTest {
     }
 
     @Test
+    void refresh_lockedAccount_isRejectedWithoutRevokingTheToken() {
+        User user = buildUser("alice");
+        user.setLockedUntil(OffsetDateTime.now().plusMinutes(10));
+        when(jwtTokenProvider.validateToken("old-refresh")).thenReturn(true);
+        when(blacklistRepository.existsById(anyString())).thenReturn(false);
+        when(jwtTokenProvider.extractUsername("old-refresh")).thenReturn("alice");
+        when(userRepository.findByUsernameAndEnabledTrue("alice")).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.refresh("old-refresh"))
+                .isInstanceOfSatisfying(AccountLockedException.class, e -> assertThat(e.getMinutesLeft()).isEqualTo(10));
+
+        verify(blacklistRepository, never()).insertIgnoreConflict(anyString(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(anyString(), anyList());
+    }
+
+    @Test
     void refresh_blacklistedToken_throwsAuthException() {
         when(jwtTokenProvider.validateToken("blacklisted")).thenReturn(true);
         when(blacklistRepository.existsById(anyString())).thenReturn(true);

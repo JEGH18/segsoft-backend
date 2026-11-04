@@ -3,6 +3,7 @@ package co.icesi.pdgseg.service;
 import co.icesi.pdgseg.dto.response.AuthResponse;
 import co.icesi.pdgseg.entity.EmailVerificationToken;
 import co.icesi.pdgseg.entity.User;
+import co.icesi.pdgseg.exception.AccountLockedException;
 import co.icesi.pdgseg.exception.EmailDeliveryUnavailableException;
 import co.icesi.pdgseg.exception.InvalidVerificationTokenException;
 import co.icesi.pdgseg.repository.EmailVerificationTokenRepository;
@@ -82,7 +83,7 @@ public class EmailVerificationService {
     }
 
     /** Consumes the link, marks the email as verified and starts the session of its account. */
-    @Transactional
+    @Transactional(noRollbackFor = AccountLockedException.class)
     public AuthResponse verify(String token, String ipAddress) {
         EmailVerificationToken stored = tokenRepository.findByTokenHash(OneTimeTokens.hash(token))
                 .orElseThrow(InvalidVerificationTokenException::new);
@@ -94,6 +95,13 @@ public class EmailVerificationService {
                 throw new InvalidVerificationTokenException("Tu correo ya está verificado. Inicia sesión.");
             }
             throw new InvalidVerificationTokenException();
+        }
+        // The link starts a session, so it must not open an account locked by failed logins. It is
+        // not used up: it still works once the lock is over.
+        if (AuthService.isLocked(user)) {
+            auditService.record("LOGIN_FAILURE", user.getUsername(), ipAddress,
+                    Map.of("reason", "account_locked", "via", "verify_email"));
+            throw AuthService.stillLocked(user);
         }
 
         stored.setUsedAt(now);

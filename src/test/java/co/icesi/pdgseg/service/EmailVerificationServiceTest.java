@@ -3,6 +3,7 @@ package co.icesi.pdgseg.service;
 import co.icesi.pdgseg.dto.response.AuthResponse;
 import co.icesi.pdgseg.entity.EmailVerificationToken;
 import co.icesi.pdgseg.entity.User;
+import co.icesi.pdgseg.exception.AccountLockedException;
 import co.icesi.pdgseg.exception.EmailDeliveryUnavailableException;
 import co.icesi.pdgseg.exception.InvalidVerificationTokenException;
 import co.icesi.pdgseg.exception.TooManyRequestsException;
@@ -106,6 +107,23 @@ class EmailVerificationServiceTest {
         assertThat(user.isEmailPendingVerification()).isFalse();
         assertThat(stored.getUsedAt()).isNotNull();
         verify(auditService).record("EMAIL_VERIFIED", "juan", "ip", Map.of());
+    }
+
+    @Test
+    void verify_doesNotStartASessionForALockedAccount_norUseUpTheLink() {
+        User user = pendingUser();
+        user.setLockedUntil(OffsetDateTime.now().plusMinutes(20));
+        EmailVerificationToken stored = new EmailVerificationToken(user, ReportChecksum.sha256Hex("tok"),
+                OffsetDateTime.now().plusHours(1));
+        when(tokenRepository.findByTokenHash(ReportChecksum.sha256Hex("tok"))).thenReturn(Optional.of(stored));
+
+        assertThatThrownBy(() -> service.verify("tok", "ip"))
+                .isInstanceOf(AccountLockedException.class)
+                .hasMessageContaining("bloqueada");
+
+        assertThat(stored.getUsedAt()).isNull();
+        assertThat(user.getEmailVerifiedAt()).isNull();
+        verifyNoInteractions(authService);
     }
 
     @Test

@@ -85,8 +85,7 @@ public class AuthService {
         if (isLocked(user)) {
             auditService.record("LOGIN_FAILURE", user.getUsername(), ipAddress,
                     Map.of("reason", "account_locked", "locked_until", user.getLockedUntil().toString()));
-            long minutesLeft = minutesLeft(user);
-            throw new AccountLockedException(stillLockedMessage(minutesLeft, hasVerifiedEmail(user)), minutesLeft);
+            throw stillLocked(user);
         }
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
@@ -130,7 +129,11 @@ public class AuthService {
         return new AuthResponse(accessToken, refreshToken, roles);
     }
 
-    @Transactional
+    /**
+     * A locked account cannot renew a session started before the lock; the refresh token is not
+     * revoked, so the session goes on once the lock ends or the account is unlocked.
+     */
+    @Transactional(noRollbackFor = AccountLockedException.class)
     public AuthResponse refresh(String refreshToken) {
         if (!jwtTokenProvider.validateToken(refreshToken)) {
             throw new AuthException(INVALID_CREDENTIALS);
@@ -144,6 +147,11 @@ public class AuthService {
         String username = jwtTokenProvider.extractUsername(refreshToken);
         User user = userRepository.findByUsernameAndEnabledTrue(username)
                 .orElseThrow(() -> new AuthException(INVALID_CREDENTIALS));
+        if (isLocked(user)) {
+            auditService.record("LOGIN_FAILURE", username, null,
+                    Map.of("reason", "account_locked", "via", "refresh"));
+            throw stillLocked(user);
+        }
 
         // Rotation: invalidate old refresh token, issue a new one
         Date expiry = jwtTokenProvider.extractExpiry(refreshToken);
@@ -180,9 +188,15 @@ public class AuthService {
 
     // ── private helpers ──────────────────────────────────────────────────────
 
-    private boolean isLocked(User user) {
+    static boolean isLocked(User user) {
         return user.getLockedUntil() != null &&
                user.getLockedUntil().isAfter(OffsetDateTime.now());
+    }
+
+    /** The rejection for any way into a locked account: login, session renewal or email link. */
+    static AccountLockedException stillLocked(User user) {
+        long minutesLeft = minutesLeft(user);
+        return new AccountLockedException(stillLockedMessage(minutesLeft, hasVerifiedEmail(user)), minutesLeft);
     }
 
     /** Minutes until the lock ends, rounded up, so it never says 0 while still locked. */
