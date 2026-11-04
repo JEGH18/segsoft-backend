@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.response.ReportResponse;
 import co.icesi.pdgseg.entity.enums.ReportStatus;
@@ -36,6 +37,7 @@ class AnalysisReportControllerTest {
 
     @MockBean ReportService reportService;
     @MockBean JwtTokenProvider jwtTokenProvider;
+    @MockBean AccountAccessService accountAccessService;
     @MockBean UserDetailsServiceImpl userDetailsService;
     @MockBean AuditService auditService;
 

@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.config.WebMvcConfig;
 import co.icesi.pdgseg.dto.response.RuleResponse;
@@ -46,6 +47,7 @@ class RuleControllerTest {
 
     @MockBean RuleService ruleService;
     @MockBean JwtTokenProvider jwtTokenProvider;
+    @MockBean AccountAccessService accountAccessService;
     @MockBean UserDetailsServiceImpl userDetailsService;
 
     private RuleResponse stub(UUID policyId) {

@@ -23,7 +23,7 @@ env:
     PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,
     ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest,
     ProdAccountsInitializerTest,RegistrationServiceTest,RegistrationRateLimiterTest,
-    EmailVerificationServiceTest,AuthMailerTest,AuthServiceTest,AccountUnlockServiceTest
+    EmailVerificationServiceTest,AuthMailerTest,AuthServiceTest,AccountUnlockServiceTest,AccountAccessServiceTest
   INTEGRATION_TESTS: StructuredReportIntegrationTest,ReportExportIntegrationTest,AuthControllerIntegrationTest,RegistrationIntegrationTest,RegistrationDisabledIntegrationTest,LoginLockoutIntegrationTest
 
 jobs:

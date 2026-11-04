@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.config.WebMvcConfig;
 import co.icesi.pdgseg.dto.response.PolicyResponse;
@@ -42,6 +43,7 @@ class PolicyControllerSearchTest {
 
     @MockBean PolicyService policyService;
     @MockBean JwtTokenProvider jwtTokenProvider;
+    @MockBean AccountAccessService accountAccessService;
     @MockBean UserDetailsServiceImpl userDetailsService;
 
     private PolicyResponse stub(String name) {

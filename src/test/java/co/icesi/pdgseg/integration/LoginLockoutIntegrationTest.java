@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -267,6 +268,59 @@ class LoginLockoutIntegrationTest extends PostgreSQLContainerBase {
         postJson("/api/v1/auth/unlock", Map.of("token", unlockEmails(username).get(0).token()))
                 .andExpect(status().isOk());
         mockMvc.perform(post("/api/v1/auth/refresh").cookie(refresh)).andExpect(status().isOk());
+    }
+
+    private String accessToken(String username) throws Exception {
+        String body = login(username, PASSWORD).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("accessToken").asText();
+    }
+
+    private ResultActions getAs(String accessToken, String path) throws Exception {
+        return mockMvc.perform(get(path).header("Authorization", "Bearer " + accessToken));
+    }
+
+    @Test
+    void anAccessTokenFromBeforeTheLock_stopsWorkingOnTheNextRequest() throws Exception {
+        String username = newAccountWithVerifiedEmail();
+        String accessToken = accessToken(username);
+        getAs(accessToken, "/api/v1/auth/me").andExpect(status().isOk());
+
+        failFourTimes(username);
+        login(username, WRONG_PASSWORD).andExpect(status().isLocked());
+
+        // Without waiting for the token's 15 minutes to run out.
+        getAs(accessToken, "/api/v1/auth/me")
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_LOCKED"))
+                .andExpect(jsonPath("$.minutesLeft").value(30))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(
+                        "usa el enlace que te enviamos por correo")));
+        getAs(accessToken, "/api/v1/repositories").andExpect(status().isLocked());
+
+        // The stale token does not get in the way of the endpoints that need no session.
+        String unlockToken = unlockEmails(username).get(0).token();
+        mockMvc.perform(post("/api/v1/auth/unlock")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("token", unlockToken))))
+                .andExpect(status().isOk());
+
+        // Once unlocked, the same token works again until it expires.
+        getAs(accessToken, "/api/v1/auth/me").andExpect(status().isOk());
+    }
+
+    @Test
+    void anAccessTokenOfADisabledAccount_stopsWorkingOnTheNextRequest() throws Exception {
+        String username = newAccount();
+        String accessToken = accessToken(username);
+        getAs(accessToken, "/api/v1/auth/me").andExpect(status().isOk());
+
+        jdbcTemplate.update("UPDATE users SET enabled = false WHERE username = ?", username);
+
+        getAs(accessToken, "/api/v1/auth/me")
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_REVOKED"));
     }
 
     @Test

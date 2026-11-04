@@ -189,24 +189,34 @@ public class AuthService {
     // ── private helpers ──────────────────────────────────────────────────────
 
     static boolean isLocked(User user) {
-        return user.getLockedUntil() != null &&
-               user.getLockedUntil().isAfter(OffsetDateTime.now());
+        return isLocked(user.getLockedUntil());
     }
 
-    /** The rejection for any way into a locked account: login, session renewal or email link. */
+    static boolean isLocked(OffsetDateTime lockedUntil) {
+        return lockedUntil != null && lockedUntil.isAfter(OffsetDateTime.now());
+    }
+
+    /**
+     * The rejection for any way into a locked account: login, session renewal, email link or an
+     * access token issued before the lock.
+     */
     static AccountLockedException stillLocked(User user) {
-        long minutesLeft = minutesLeft(user);
-        return new AccountLockedException(stillLockedMessage(minutesLeft, hasVerifiedEmail(user)), minutesLeft);
+        return stillLocked(user.getLockedUntil(), hasVerifiedEmail(user.getEmail(), user.getEmailVerifiedAt()));
+    }
+
+    static AccountLockedException stillLocked(OffsetDateTime lockedUntil, boolean emailed) {
+        long minutesLeft = minutesLeft(lockedUntil);
+        return new AccountLockedException(stillLockedMessage(minutesLeft, emailed), minutesLeft);
     }
 
     /** Minutes until the lock ends, rounded up, so it never says 0 while still locked. */
-    private static long minutesLeft(User user) {
-        long seconds = Duration.between(OffsetDateTime.now(), user.getLockedUntil()).getSeconds();
+    private static long minutesLeft(OffsetDateTime lockedUntil) {
+        long seconds = Duration.between(OffsetDateTime.now(), lockedUntil).getSeconds();
         return Math.max(1, (seconds + 59) / 60);
     }
 
-    private static boolean hasVerifiedEmail(User user) {
-        return user.getEmail() != null && user.getEmailVerifiedAt() != null;
+    static boolean hasVerifiedEmail(String email, OffsetDateTime emailVerifiedAt) {
+        return email != null && emailVerifiedAt != null;
     }
 
     static String attemptsLeftMessage(int attemptsLeft) {

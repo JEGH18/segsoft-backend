@@ -1,5 +1,6 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.service.AccountAccessService;
 import co.icesi.pdgseg.config.SecurityConfig;
 import co.icesi.pdgseg.dto.response.PolicySetDetailResponse;
 import co.icesi.pdgseg.dto.response.PolicySetPageResponse;
@@ -55,6 +56,7 @@ class PolicySetControllerTest {
 
     @MockBean PolicySetService policySetService;
     @MockBean JwtTokenProvider jwtTokenProvider;
+    @MockBean AccountAccessService accountAccessService;
     @MockBean UserDetailsServiceImpl userDetailsService;
     @MockBean AuditService auditService;
 
