@@ -49,7 +49,11 @@ public class AuthService {
         this.auditService        = auditService;
     }
 
-    @Transactional
+    /**
+     * A rejected login throws, but what it stored before throwing (the failed attempt, the lock and
+     * the audit) must be committed: rolling them back would leave brute force unlimited and unaudited.
+     */
+    @Transactional(noRollbackFor = {AuthException.class, EmailNotVerifiedException.class})
     public AuthResponse login(LoginRequest request, String ipAddress) {
         User user = userRepository.findByUsername(request.username()).orElse(null);
 

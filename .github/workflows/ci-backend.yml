@@ -1,10 +1,10 @@
 # CI de los reportes de cumplimiento (generación, contrato JSON Schema,
 # integridad, exportación PDF/SARIF y caché).
 #
-# Solo corre las suites de reportes: el `mvn test` completo arrastra 25 fallos
-# previos y ajenos a esta funcionalidad (PolicyControllerTest,
-# PolicyControllerSearchTest, RuleControllerTest y AuthServiceTest), que
-# dejarían el pipeline siempre en rojo. Cuando se corrijan, este workflow puede
+# Solo corre las suites de reportes y de autenticación: el `mvn test` completo
+# arrastra fallos previos y ajenos a esta funcionalidad (PolicyControllerTest,
+# PolicyControllerSearchTest y RuleControllerTest), que dejarían el pipeline
+# siempre en rojo. Cuando se corrijan, este workflow puede
 # pasar a `mvn verify -Pintegration-tests`.
 name: CI Backend - Reportes
 
@@ -23,8 +23,8 @@ env:
     PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,
     ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest,
     ProdAccountsInitializerTest,RegistrationServiceTest,RegistrationRateLimiterTest,
-    EmailVerificationServiceTest,VerificationMailerTest
-  INTEGRATION_TESTS: StructuredReportIntegrationTest,ReportExportIntegrationTest,AuthControllerIntegrationTest,RegistrationIntegrationTest,RegistrationDisabledIntegrationTest
+    EmailVerificationServiceTest,VerificationMailerTest,AuthServiceTest
+  INTEGRATION_TESTS: StructuredReportIntegrationTest,ReportExportIntegrationTest,AuthControllerIntegrationTest,RegistrationIntegrationTest,RegistrationDisabledIntegrationTest,LoginLockoutIntegrationTest
 
 jobs:
   reports:

@@ -3,9 +3,9 @@
 // cumplimiento (generación, contrato JSON Schema, integridad, exportación PDF/SARIF y
 // caché) y sus tests de integración contra un PostgreSQL 15 propio del build.
 //
-// Solo corre las suites de reportes: el `mvn test` completo arrastra 25 fallos previos y
-// ajenos a esta funcionalidad (PolicyControllerTest, PolicyControllerSearchTest,
-// RuleControllerTest y AuthServiceTest), que dejarían el pipeline siempre en rojo.
+// Solo corre las suites de reportes y de autenticación: el `mvn test` completo arrastra
+// fallos previos y ajenos a esta funcionalidad (PolicyControllerTest,
+// PolicyControllerSearchTest y RuleControllerTest), que dejarían el pipeline siempre en rojo.
 //
 // Requiere en Jenkins: los plugins Pipeline, Docker Pipeline y JUnit, y un agente con Docker.
 pipeline {
@@ -23,8 +23,8 @@ pipeline {
         MAVEN_IMAGE = 'maven:3.9-eclipse-temurin-17'
         POSTGRES_IMAGE = 'postgres:15'
         MAVEN_ARGS = '-B -Dmaven.repo.local=.m2/repository -Dsurefire.failIfNoSpecifiedTests=false'
-        UNIT_TESTS = 'ReportChecksumTest,StructuredReportSchemaTest,ReportGeneratorServiceTest,ReportServiceTest,ReportControllerTest,AnalysisReportControllerTest,ReportExportCachePerformanceTest,PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest,ProdAccountsInitializerTest,RegistrationServiceTest,RegistrationRateLimiterTest,EmailVerificationServiceTest,VerificationMailerTest'
-        INTEGRATION_TESTS = 'StructuredReportIntegrationTest,ReportExportIntegrationTest,AuthControllerIntegrationTest,RegistrationIntegrationTest,RegistrationDisabledIntegrationTest'
+        UNIT_TESTS = 'ReportChecksumTest,StructuredReportSchemaTest,ReportGeneratorServiceTest,ReportServiceTest,ReportControllerTest,AnalysisReportControllerTest,ReportExportCachePerformanceTest,PdfReportExporterTest,SarifReportExporterTest,SarifSchemaValidatorTest,ReportExporterRegistryTest,ReportTextSanitizerTest,ExportFileCacheTest,ExportSizeLimitTest,SecretMaskingServiceTest,ProdAccountsInitializerTest,RegistrationServiceTest,RegistrationRateLimiterTest,EmailVerificationServiceTest,VerificationMailerTest,AuthServiceTest'
+        INTEGRATION_TESTS = 'StructuredReportIntegrationTest,ReportExportIntegrationTest,AuthControllerIntegrationTest,RegistrationIntegrationTest,RegistrationDisabledIntegrationTest,LoginLockoutIntegrationTest'
     }
 
     stages {

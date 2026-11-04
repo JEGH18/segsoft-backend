@@ -2,7 +2,6 @@ package co.icesi.pdgseg.service;
 
 import co.icesi.pdgseg.dto.request.LoginRequest;
 import co.icesi.pdgseg.dto.response.AuthResponse;
-import co.icesi.pdgseg.entity.RefreshTokenBlacklist;
 import co.icesi.pdgseg.entity.Role;
 import co.icesi.pdgseg.entity.User;
 import co.icesi.pdgseg.entity.enums.RoleType;
@@ -157,7 +156,8 @@ class AuthServiceTest {
 
         assertThat(response.accessToken()).isEqualTo("new-access");
         assertThat(response.refreshToken()).isEqualTo("new-refresh"); // rotated
-        verify(blacklistRepository).save(any(RefreshTokenBlacklist.class)); // old token invalidated
+        // old token invalidated (an insert that tolerates a concurrent rotation of the same token)
+        verify(blacklistRepository).insertIgnoreConflict(matches("[0-9a-f]{64}"), any(OffsetDateTime.class));
     }
 
     @Test
@@ -178,8 +178,7 @@ class AuthServiceTest {
 
         authService.logout("refresh-tk");
 
-        ArgumentCaptor<RefreshTokenBlacklist> captor = ArgumentCaptor.forClass(RefreshTokenBlacklist.class);
-        verify(blacklistRepository).save(captor.capture());
-        assertThat(captor.getValue().getTokenHash()).isNotBlank();
+        // Only the SHA-256 of the token is stored.
+        verify(blacklistRepository).insertIgnoreConflict(matches("[0-9a-f]{64}"), any(OffsetDateTime.class));
     }
 }
