@@ -196,12 +196,29 @@ Entrar en `https://app.<dominio>` con `admin` y analizar los tres ZIP de
 contraseñas de 12 caracteres o más) y `docker compose up -d backend`. Las cuentas se aplican en
 cada arranque.
 
+**Promover un usuario a administrador** (cuenta ya registrada y con el correo verificado):
+
+```bash
+docker compose exec -T postgres psql -U segsoft segsoft -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+DELETE FROM user_roles WHERE user_id = (SELECT id FROM users WHERE username = 'USUARIO');
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'USUARIO' AND r.name = 'SECURITY_ADMIN';
+COMMIT;
+SQL
+```
+
+El cambio de rol se aplica al iniciar sesión de nuevo (el token vigente conserva los roles con
+que se emitió, hasta 15 minutos).
+
 ## Seguridad
 
 - El backend arranca con el perfil `prod`: no crea las cuentas de demostración, y **se niega a
-  arrancar** si `SEGSOFT_ACCOUNTS` falta, es inválida o no incluye un `SECURITY_ADMIN`. La
-  migración V3 crea `admin` con la contraseña pública `admin123`: esta configuración la
-  reemplaza en cada arranque. Las cuentas de demostración que no estén en `SEGSOFT_ACCOUNTS` y
+  arrancar** si `SEGSOFT_ACCOUNTS` es inválida o no incluye un `SECURITY_ADMIN`. Puede quedar
+  vacía solo si la base ya tiene un `SECURITY_ADMIN` habilitado (por ejemplo, usuarios
+  registrados y promovidos, ver "Promover un usuario a administrador"); así deja de recrear sus
+  cuentas en cada arranque. La migración V3 crea `admin` con la contraseña pública `admin123`.
+  Las cuentas de demostración que no estén en `SEGSOFT_ACCOUNTS` y
   conserven su contraseña pública se deshabilitan.
 - Solo Caddy queda expuesto. El motor no tiene puertos publicados y el backend solo escucha en
   `127.0.0.1:8080` (diagnóstico desde el propio servidor).
@@ -209,8 +226,8 @@ cada arranque.
   documentación Swagger.
 - El registro público crea **solo cuentas DEVELOPER**, con límites de intentos por IP y de
   cuentas nuevas por hora (`REGISTRATION_MAX_PER_IP_PER_HOUR`, `REGISTRATION_MAX_PER_HOUR`).
-  Se apaga con `SEGSOFT_REGISTRATION_ENABLED=false`. Los roles AUDITOR y SECURITY_ADMIN solo
-  salen de `SEGSOFT_ACCOUNTS`.
+  Se apaga con `SEGSOFT_REGISTRATION_ENABLED=false`. Los roles AUDITOR y SECURITY_ADMIN salen
+  de `SEGSOFT_ACCOUNTS` o de promover un usuario en la base.
 - Apaga el servidor (`docker compose stop`) cuando no haya sesiones de prueba.
 
 ## Problemas frecuentes

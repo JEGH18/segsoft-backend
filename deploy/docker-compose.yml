@@ -55,7 +55,8 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
       ENGINE_BASE_URL: http://engine:8001
       CORS_ALLOWED_ORIGINS: ${FRONTEND_ORIGIN:?Falta FRONTEND_ORIGIN en .env}
-      SEGSOFT_ACCOUNTS: ${SEGSOFT_ACCOUNTS:?Falta SEGSOFT_ACCOUNTS en .env}
+      # Vacía solo si la base ya tiene un SECURITY_ADMIN habilitado (si no, el backend no arranca).
+      SEGSOFT_ACCOUNTS: ${SEGSOFT_ACCOUNTS:-}
       # Registro público de cuentas DEVELOPER (false lo apaga) y sus límites por hora.
       SEGSOFT_REGISTRATION_ENABLED: ${SEGSOFT_REGISTRATION_ENABLED:-true}
       REGISTRATION_MAX_PER_IP_PER_HOUR: ${REGISTRATION_MAX_PER_IP_PER_HOUR:-20}

@@ -72,6 +72,17 @@ public class AccountSeeder {
                 .anyMatch(hash -> passwordEncoder.matches(rawPassword, hash));
     }
 
+    /** True when some enabled account has the SECURITY_ADMIN role. */
+    public boolean hasEnabledSecurityAdmin() {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS (
+                    SELECT 1 FROM users u
+                    JOIN user_roles ur ON ur.user_id = u.id
+                    JOIN roles r ON r.id = ur.role_id
+                    WHERE r.name = 'SECURITY_ADMIN' AND u.enabled = true)
+                """, Boolean.class));
+    }
+
     public void disable(String username) {
         jdbc.update("UPDATE users SET enabled = false WHERE username = ?", username);
     }

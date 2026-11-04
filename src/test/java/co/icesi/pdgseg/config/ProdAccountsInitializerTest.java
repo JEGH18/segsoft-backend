@@ -38,10 +38,8 @@ class ProdAccountsInitializerTest {
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {"   ", "\n;\n"})
-    void parse_rejectsAMissingVariable(String spec) {
-        assertThatThrownBy(() -> ProdAccountsInitializer.parse(spec))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("no está definida");
+    void parse_readsAnEmptyVariableAsNoAccounts(String spec) {
+        assertThat(ProdAccountsInitializer.parse(spec)).isEmpty();
     }
 
     @ParameterizedTest
@@ -85,10 +83,35 @@ class ProdAccountsInitializerTest {
     }
 
     @Test
+    void run_withAnEmptyVariable_keepsTheAdministratorsAlreadyInTheDatabase() {
+        AccountSeeder seeder = mock(AccountSeeder.class);
+        when(seeder.hasEnabledSecurityAdmin()).thenReturn(true);
+        when(seeder.hasPassword("admin", "admin123")).thenReturn(true);
+
+        new ProdAccountsInitializer(seeder, "").run();
+
+        verify(seeder, never()).replace(anyString(), anyString(), anyString());
+        verify(seeder).disable("admin"); // a demo account with its public password is still disabled
+    }
+
+    @Test
+    void run_withAnEmptyVariable_refusesToStartWithoutAnAdministrator() {
+        AccountSeeder seeder = mock(AccountSeeder.class);
+        when(seeder.hasEnabledSecurityAdmin()).thenReturn(false);
+
+        assertThatThrownBy(() -> new ProdAccountsInitializer(seeder, " ").run())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no está definida")
+                .hasMessageContaining("SECURITY_ADMIN");
+        verify(seeder, never()).replace(anyString(), anyString(), anyString());
+        verify(seeder, never()).disable(anyString());
+    }
+
+    @Test
     void run_failsBeforeTouchingTheDatabaseWhenTheVariableIsInvalid() {
         AccountSeeder seeder = mock(AccountSeeder.class);
 
-        assertThatThrownBy(() -> new ProdAccountsInitializer(seeder, "").run())
+        assertThatThrownBy(() -> new ProdAccountsInitializer(seeder, "dev:DEVELOPER:corta").run())
                 .isInstanceOf(IllegalStateException.class);
         verify(seeder, never()).replace(anyString(), anyString(), anyString());
     }

@@ -22,9 +22,12 @@ import java.util.regex.Pattern;
  * password may contain {@code :} but not {@code ;}. Example:
  * {@code admin:SECURITY_ADMIN:…;auditor:AUDITOR:…;dev:DEVELOPER:…}.
  *
- * <p>The application refuses to start if the variable is missing or invalid: migration V3 seeds
- * {@code admin/admin123}, and the dev profile publishes the passwords of the demo accounts. Demo
- * accounts not listed in the variable are disabled while they still have their public password.
+ * <p>The application refuses to start if the variable is invalid, or if it is empty and the
+ * database has no enabled SECURITY_ADMIN: migration V3 seeds {@code admin/admin123}, and the dev
+ * profile publishes the passwords of the demo accounts. Once the administrators are real users of
+ * the platform (self-registered and promoted), the variable can be left empty so it stops
+ * recreating its accounts on every start. Demo accounts not listed in the variable are disabled
+ * while they still have their public password.
  */
 @Component
 @Profile("prod")
@@ -60,6 +63,10 @@ public class ProdAccountsInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) {
         List<Account> accounts = parse(accountsSpec);
+        if (accounts.isEmpty() && !accountSeeder.hasEnabledSecurityAdmin()) {
+            throw invalid("no está definida y la base no tiene ninguna cuenta SECURITY_ADMIN habilitada. "
+                    + "Defínela (usuario:ROL:contraseña, separadas por ';') con al menos un SECURITY_ADMIN.");
+        }
         Set<String> configured = new HashSet<>();
         for (Account account : accounts) {
             accountSeeder.replace(account.username(), account.password(), account.role());
@@ -71,7 +78,11 @@ public class ProdAccountsInitializer implements CommandLineRunner {
                 log.warn("Cuenta de demostración deshabilitada porque su contraseña es pública: {}", username);
             }
         });
-        log.info("Cuentas de producción listas: {}", accounts);
+        if (accounts.isEmpty()) {
+            log.info("SEGSOFT_ACCOUNTS vacía: se usan las cuentas SECURITY_ADMIN que ya están en la base.");
+        } else {
+            log.info("Cuentas de producción listas: {}", accounts);
+        }
     }
 
     static List<Account> parse(String spec) {
@@ -107,11 +118,8 @@ public class ProdAccountsInitializer implements CommandLineRunner {
             }
             accounts.add(new Account(username, role, password));
         }
-        if (accounts.isEmpty()) {
-            throw invalid("no está definida. El perfil prod necesita las cuentas de acceso "
-                    + "(usuario:ROL:contraseña, separadas por ';').");
-        }
-        if (accounts.stream().noneMatch(account -> account.role().equals("SECURITY_ADMIN"))) {
+        // Empty is checked by run(), against the administrators already in the database.
+        if (!accounts.isEmpty() && accounts.stream().noneMatch(account -> account.role().equals("SECURITY_ADMIN"))) {
             throw invalid("debe haber al menos una cuenta SECURITY_ADMIN.");
         }
         return accounts;
