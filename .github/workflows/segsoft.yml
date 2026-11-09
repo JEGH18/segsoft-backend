@@ -1,0 +1,64 @@
+name: SegSoft (dogfooding)
+
+# Analiza el código de este repositorio con el CLI pdgseg contra el SegSoft desplegado, y sube el
+# SARIF a GitHub Code Scanning (Security → Code scanning, y anotaciones en los PR).
+#
+# Requiere el secreto PDGSEG_TOKEN: un token de API creado en SegSoft (ícono de llave → Tokens de API).
+# Sin él (por ejemplo en PR desde forks) el análisis se omite con un aviso.
+#
+# Por ahora con --dry-run: informa sin bloquear mientras se corrigen los hallazgos existentes. Para que
+# bloquee el merge, quitar --dry-run y marcar este job como required status check de main.
+# Un error técnico (el backend no responde, p. ej. con la VM apagada de 02:00 en adelante) sí lo falla.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  segsoft:
+    name: Análisis de SegSoft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      PDGSEG_API_TOKEN: ${{ secrets.PDGSEG_TOKEN }}
+    steps:
+      - name: Token configurado
+        id: token
+        run: |
+          if [ -z "$PDGSEG_API_TOKEN" ]; then
+            echo "::warning::Falta el secreto PDGSEG_TOKEN: se omite el análisis de SegSoft."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.token.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Instalar pdgseg
+        if: steps.token.outputs.present == 'true'
+        # Cuando pdgseg-cli esté publicado en PyPI: pip install pdgseg-cli
+        run: pip install "git+https://github.com/JEGH18/segsoft-cli.git@main"
+
+      - name: pdgseg analyze
+        if: steps.token.outputs.present == 'true'
+        run: pdgseg analyze --dry-run --output sarif --output-path results.sarif
+
+      - name: Subir el SARIF a Code Scanning
+        if: always() && steps.token.outputs.present == 'true' && hashFiles('results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+          category: segsoft

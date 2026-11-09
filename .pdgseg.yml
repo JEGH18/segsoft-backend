@@ -1,0 +1,14 @@
+# Configuración del CLI pdgseg (https://github.com/JEGH18/segsoft-cli) para analizar el backend con
+# SegSoft mismo (dogfooding). La usa .github/workflows/segsoft.yml.
+schemaVersion: 1
+server: https://segsoft-icesi.westus3.cloudapp.azure.com
+framework: OWASP_TOP_10_2021
+failOnSeverity: high
+exclude:
+  - target/
+  - src/test/
+  - deploy/
+  # Las migraciones siembran las reglas de SegSoft: contienen sus patrones y ejemplos de código
+  # vulnerable como texto, y el análisis los detectaría a sí mismos.
+  - src/main/resources/db/migration/
+timeoutMinutes: 20
