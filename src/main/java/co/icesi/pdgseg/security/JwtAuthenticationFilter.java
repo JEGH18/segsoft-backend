@@ -67,7 +67,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     // The token alone would outlive a lock, a disabling or a deletion of its account.
                     try {
-                        accountAccessService.requireUsable(username);
+                        accountAccessService.requireUsable(username, jwtTokenProvider.extractTokenVersion(token));
                     } catch (AccountLockedException | AuthException e) {
                         if (isPublicAuthEndpoint(request)) {
                             // Login, logout, unlock... must still work: the request just goes on

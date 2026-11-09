@@ -71,6 +71,9 @@ auth:
     unverified-retention: P7D
     # Local development only: writes the verification link to the log when there is no SMTP.
     log-links: false
+  password-reset:
+    # How long the link of a password reset email works.
+    token-ttl: PT30M
 
 # Public URL of the frontend; the verification links point to it, never to the request's Host.
 app:

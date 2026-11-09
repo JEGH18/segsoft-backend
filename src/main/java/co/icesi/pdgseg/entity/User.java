@@ -42,6 +42,10 @@ public class User {
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;
 
+    /** Goes inside every token; changing the password increments it, which ends all sessions. */
+    @Column(name = "token_version", nullable = false)
+    private Integer tokenVersion = 0;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "user_roles",
@@ -81,6 +85,9 @@ public class User {
 
     public OffsetDateTime getLastFailedAt() { return lastFailedAt; }
     public void setLastFailedAt(OffsetDateTime lastFailedAt) { this.lastFailedAt = lastFailedAt; }
+
+    public int getTokenVersion() { return tokenVersion == null ? 0 : tokenVersion; }
+    public void setTokenVersion(int tokenVersion) { this.tokenVersion = tokenVersion; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

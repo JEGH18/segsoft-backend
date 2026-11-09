@@ -1,9 +1,11 @@
 package co.icesi.pdgseg.controller;
 
 import co.icesi.pdgseg.security.ClientIpResolver;
+import co.icesi.pdgseg.dto.request.ForgotPasswordRequest;
 import co.icesi.pdgseg.dto.request.LoginRequest;
 import co.icesi.pdgseg.dto.request.RegisterRequest;
 import co.icesi.pdgseg.dto.request.ResendVerificationRequest;
+import co.icesi.pdgseg.dto.request.ResetPasswordRequest;
 import co.icesi.pdgseg.dto.request.UnlockAccountRequest;
 import co.icesi.pdgseg.dto.request.VerifyEmailRequest;
 import co.icesi.pdgseg.dto.response.AuthResponse;
@@ -11,6 +13,7 @@ import co.icesi.pdgseg.dto.response.RegistrationResponse;
 import co.icesi.pdgseg.dto.response.UserResponse;
 import co.icesi.pdgseg.exception.AuthException;
 import co.icesi.pdgseg.service.AccountUnlockService;
+import co.icesi.pdgseg.service.PasswordResetService;
 import co.icesi.pdgseg.service.AuthService;
 import co.icesi.pdgseg.service.EmailVerificationService;
 import co.icesi.pdgseg.service.RegistrationService;
@@ -50,17 +53,20 @@ public class AuthController {
     private final RegistrationService registrationService;
     private final EmailVerificationService emailVerificationService;
     private final AccountUnlockService accountUnlockService;
+    private final PasswordResetService passwordResetService;
     private final ClientIpResolver clientIpResolver;
 
     public AuthController(AuthService authService,
                           RegistrationService registrationService,
                           EmailVerificationService emailVerificationService,
                           AccountUnlockService accountUnlockService,
+                          PasswordResetService passwordResetService,
                           ClientIpResolver clientIpResolver) {
         this.authService = authService;
         this.registrationService = registrationService;
         this.emailVerificationService = emailVerificationService;
         this.accountUnlockService = accountUnlockService;
+        this.passwordResetService = passwordResetService;
         this.clientIpResolver = clientIpResolver;
     }
 
@@ -110,6 +116,32 @@ public class AuthController {
                                                       HttpServletRequest httpRequest) {
         accountUnlockService.unlock(request.token(), resolveIp(httpRequest));
         return ResponseEntity.ok(Map.of("message", "Tu cuenta quedó desbloqueada. Ya puedes iniciar sesión."));
+    }
+
+    @PostMapping("/forgot-password")
+    @Operation(summary = "Pedir un enlace para cambiar la contraseña",
+               description = "Envía al correo verificado de la cuenta un enlace de un solo uso, que vence a los 30 "
+                       + "minutos, e invalida los anteriores. Responde 202 exista o no la cuenta, para no revelar "
+                       + "qué correos están registrados. Las cuentas sin correo verificado no reciben nada.")
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request,
+                                                              HttpServletRequest httpRequest) {
+        passwordResetService.request(request.email(), resolveIp(httpRequest));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("message",
+                "Si el correo pertenece a una cuenta, te enviamos un enlace para cambiar la contraseña. "
+                        + "Vence en 30 minutos."));
+    }
+
+    @PostMapping("/reset-password")
+    @Operation(summary = "Cambiar la contraseña con el enlace del correo",
+               description = "Consume el token del enlace y fija la contraseña nueva, con las mismas reglas del "
+                       + "registro. Cierra todas las sesiones abiertas y levanta un bloqueo por intentos fallidos. "
+                       + "No inicia sesión. 400 si el token no es válido, ya se usó o venció, o si la contraseña no "
+                       + "cumple las reglas o es igual a la actual.")
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordRequest request,
+                                                             HttpServletRequest httpRequest) {
+        passwordResetService.reset(request.token(), request.password(), resolveIp(httpRequest));
+        return ResponseEntity.ok(Map.of("message",
+                "Tu contraseña cambió y cerramos las sesiones abiertas. Ya puedes iniciar sesión con la nueva."));
     }
 
     @GetMapping("/registration")

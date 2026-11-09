@@ -112,6 +112,11 @@ public class GlobalExceptionHandler {
         return response;
     }
 
+    @ExceptionHandler(InvalidPasswordResetTokenException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidPasswordResetToken(InvalidPasswordResetTokenException ex) {
+        return errorBody(HttpStatus.BAD_REQUEST, "INVALID_RESET_TOKEN", ex.getMessage());
+    }
+
     @ExceptionHandler(InvalidUnlockTokenException.class)
     public ResponseEntity<Map<String, Object>> handleInvalidUnlockToken(InvalidUnlockTokenException ex) {
         return errorBody(HttpStatus.BAD_REQUEST, "INVALID_UNLOCK_TOKEN", ex.getMessage());

@@ -124,8 +124,8 @@ public class AuthService {
     /** Issues the access and refresh tokens of a new session for {@code user}. */
     public AuthResponse startSession(User user) {
         List<String> roles = extractRoleNames(user);
-        String accessToken  = jwtTokenProvider.generateAccessToken(user.getUsername(), roles);
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getUsername());
+        String accessToken  = jwtTokenProvider.generateAccessToken(user.getUsername(), roles, user.getTokenVersion());
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getUsername(), user.getTokenVersion());
         return new AuthResponse(accessToken, refreshToken, roles);
     }
 
@@ -147,6 +147,10 @@ public class AuthService {
         String username = jwtTokenProvider.extractUsername(refreshToken);
         User user = userRepository.findByUsernameAndEnabledTrue(username)
                 .orElseThrow(() -> new AuthException(INVALID_CREDENTIALS));
+        // Issued before the password was changed: that session is over.
+        if (jwtTokenProvider.extractTokenVersion(refreshToken) != user.getTokenVersion()) {
+            throw new AuthException(INVALID_CREDENTIALS);
+        }
         if (isLocked(user)) {
             auditService.record("LOGIN_FAILURE", username, null,
                     Map.of("reason", "account_locked", "via", "refresh"));
@@ -159,8 +163,8 @@ public class AuthService {
                 tokenHash, expiry.toInstant().atOffset(ZoneOffset.UTC));
 
         List<String> roles      = extractRoleNames(user);
-        String newAccessToken   = jwtTokenProvider.generateAccessToken(username, roles);
-        String newRefreshToken  = jwtTokenProvider.generateRefreshToken(username);
+        String newAccessToken   = jwtTokenProvider.generateAccessToken(username, roles, user.getTokenVersion());
+        String newRefreshToken  = jwtTokenProvider.generateRefreshToken(username, user.getTokenVersion());
 
         return new AuthResponse(newAccessToken, newRefreshToken, roles);
     }

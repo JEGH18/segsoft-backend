@@ -66,8 +66,8 @@ class AuthServiceTest {
         User user = buildUser("alice");
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("pass", "hashed")).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(eq("alice"), anyList())).thenReturn("access");
-        when(jwtTokenProvider.generateRefreshToken("alice")).thenReturn("refresh");
+        when(jwtTokenProvider.generateAccessToken(eq("alice"), anyList(), eq(0))).thenReturn("access");
+        when(jwtTokenProvider.generateRefreshToken("alice", 0)).thenReturn("refresh");
 
         AuthResponse response = authService.login(new LoginRequest("alice", "pass"), "127.0.0.1");
 
@@ -191,8 +191,8 @@ class AuthServiceTest {
         when(jwtTokenProvider.extractExpiry("old-refresh"))
                 .thenReturn(new Date(System.currentTimeMillis() + 3_600_000));
         when(userRepository.findByUsernameAndEnabledTrue("alice")).thenReturn(Optional.of(user));
-        when(jwtTokenProvider.generateAccessToken(eq("alice"), anyList())).thenReturn("new-access");
-        when(jwtTokenProvider.generateRefreshToken("alice")).thenReturn("new-refresh");
+        when(jwtTokenProvider.generateAccessToken(eq("alice"), anyList(), eq(0))).thenReturn("new-access");
+        when(jwtTokenProvider.generateRefreshToken("alice", 0)).thenReturn("new-refresh");
 
         AuthResponse response = authService.refresh("old-refresh");
 
@@ -215,7 +215,35 @@ class AuthServiceTest {
                 .isInstanceOfSatisfying(AccountLockedException.class, e -> assertThat(e.getMinutesLeft()).isEqualTo(10));
 
         verify(blacklistRepository, never()).insertIgnoreConflict(anyString(), any());
-        verify(jwtTokenProvider, never()).generateAccessToken(anyString(), anyList());
+        verify(jwtTokenProvider, never()).generateAccessToken(anyString(), anyList(), anyInt());
+    }
+
+    @Test
+    void refresh_aTokenFromBeforeThePasswordChanged_isRejected() {
+        User user = buildUser("alice");
+        user.setTokenVersion(1);
+        when(jwtTokenProvider.validateToken("old-refresh")).thenReturn(true);
+        when(blacklistRepository.existsById(anyString())).thenReturn(false);
+        when(jwtTokenProvider.extractUsername("old-refresh")).thenReturn("alice");
+        when(jwtTokenProvider.extractTokenVersion("old-refresh")).thenReturn(0);
+        when(userRepository.findByUsernameAndEnabledTrue("alice")).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.refresh("old-refresh")).isInstanceOf(AuthException.class);
+
+        verify(jwtTokenProvider, never()).generateAccessToken(anyString(), anyList(), anyInt());
+    }
+
+    @Test
+    void startSession_putsTheCurrentTokenVersionInBothTokens() {
+        User user = buildUser("alice");
+        user.setTokenVersion(4);
+        when(jwtTokenProvider.generateAccessToken(eq("alice"), anyList(), eq(4))).thenReturn("access");
+        when(jwtTokenProvider.generateRefreshToken("alice", 4)).thenReturn("refresh");
+
+        AuthResponse response = authService.startSession(user);
+
+        assertThat(response.accessToken()).isEqualTo("access");
+        assertThat(response.refreshToken()).isEqualTo("refresh");
     }
 
     @Test

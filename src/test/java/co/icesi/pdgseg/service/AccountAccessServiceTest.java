@@ -29,6 +29,7 @@ class AccountAccessServiceTest {
     private void accountIs(Boolean enabled, OffsetDateTime lockedUntil, boolean verifiedEmail) {
         UserRepository.AccessState state = mock(UserRepository.AccessState.class);
         when(state.getEnabled()).thenReturn(enabled);
+        when(state.getTokenVersion()).thenReturn(2);
         when(state.getLockedUntil()).thenReturn(lockedUntil);
         when(state.getEmail()).thenReturn(verifiedEmail ? "alice@example.com" : null);
         when(state.getEmailVerifiedAt()).thenReturn(verifiedEmail ? OffsetDateTime.now().minusDays(1) : null);
@@ -38,20 +39,20 @@ class AccountAccessServiceTest {
     @Test
     void anEnabledUnlockedAccount_passes() {
         accountIs(true, null, true);
-        assertThatCode(() -> service.requireUsable("alice")).doesNotThrowAnyException();
+        assertThatCode(() -> service.requireUsable("alice", 2)).doesNotThrowAnyException();
     }
 
     @Test
     void anAccountWhoseLockIsOver_passes() {
         accountIs(true, OffsetDateTime.now().minusSeconds(1), true);
-        assertThatCode(() -> service.requireUsable("alice")).doesNotThrowAnyException();
+        assertThatCode(() -> service.requireUsable("alice", 2)).doesNotThrowAnyException();
     }
 
     @Test
     void aLockedAccount_isRejectedWithTheMinutesLeft_andTheUnlockEmailHint() {
         accountIs(true, OffsetDateTime.now().plusMinutes(12).minusSeconds(30), true);
 
-        assertThatThrownBy(() -> service.requireUsable("alice"))
+        assertThatThrownBy(() -> service.requireUsable("alice", 2))
                 .isInstanceOfSatisfying(AccountLockedException.class,
                         e -> assertThat(e.getMinutesLeft()).isEqualTo(12))
                 .hasMessage("La cuenta está bloqueada por demasiados intentos fallidos. Intenta de nuevo en "
@@ -59,9 +60,17 @@ class AccountAccessServiceTest {
     }
 
     @Test
+    void aTokenIssuedBeforeThePasswordChanged_isRejected() {
+        accountIs(true, null, true);
+        assertThatThrownBy(() -> service.requireUsable("alice", 1))
+                .isInstanceOf(AuthException.class)
+                .hasMessage(AccountAccessService.PASSWORD_CHANGED);
+    }
+
+    @Test
     void aDisabledAccount_isRejected() {
         accountIs(false, null, true);
-        assertThatThrownBy(() -> service.requireUsable("alice"))
+        assertThatThrownBy(() -> service.requireUsable("alice", 2))
                 .isInstanceOf(AuthException.class)
                 .hasMessage(AccountAccessService.SESSION_REVOKED);
     }
@@ -69,7 +78,7 @@ class AccountAccessServiceTest {
     @Test
     void aDeletedAccount_isRejected() {
         when(userRepository.findAccessStateByUsername("alice")).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.requireUsable("alice"))
+        assertThatThrownBy(() -> service.requireUsable("alice", 2))
                 .isInstanceOf(AuthException.class)
                 .hasMessage(AccountAccessService.SESSION_REVOKED);
     }

@@ -96,6 +96,40 @@ class AuthMailerTest {
     }
 
     @Test
+    void sendsThePasswordResetLink() throws Exception {
+        JavaMailSender sender = realMessages();
+
+        mailer(sender, "smtp-relay.brevo.com", false)
+                .send(new PasswordResetRequested("juan", "juan@example.com", "rst_456", 30));
+
+        ArgumentCaptor<MimeMessage> sent = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(sender).send(sent.capture());
+        MimeMessage message = sent.getValue();
+        assertThat(message.getRecipients(Message.RecipientType.TO)[0].toString()).isEqualTo("juan@example.com");
+        assertThat(message.getSubject()).isEqualTo("Cambia tu contraseña de SegSoft");
+        assertThat(text(message))
+                .contains("https://www.segsoft.website/reset-password?token=rst_456")
+                .contains("30 minutos")
+                .contains("Si no lo pediste, ignora este correo");
+    }
+
+    @Test
+    void warnsTheOwnerWhenThePasswordChanged() throws Exception {
+        JavaMailSender sender = realMessages();
+
+        mailer(sender, "smtp-relay.brevo.com", false).send(new PasswordChanged("juan", "juan@example.com"));
+
+        ArgumentCaptor<MimeMessage> sent = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(sender).send(sent.capture());
+        MimeMessage message = sent.getValue();
+        assertThat(message.getSubject()).isEqualTo("Tu contraseña de SegSoft cambió");
+        assertThat(text(message))
+                .contains("https://www.segsoft.website/forgot-password")
+                .contains("Si no fuiste tú")
+                .doesNotContain("token=");
+    }
+
+    @Test
     void isUnavailableWithoutAnSmtpHost_evenIfSpringCreatedTheSender() {
         JavaMailSender sender = realMessages();
         AuthMailer mailer = mailer(sender, "", false);

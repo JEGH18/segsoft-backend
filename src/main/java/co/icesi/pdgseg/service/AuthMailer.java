@@ -73,6 +73,18 @@ public class AuthMailer {
         send(event);
     }
 
+    @Async("mailExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPasswordResetRequested(PasswordResetRequested event) {
+        send(event);
+    }
+
+    @Async("mailExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPasswordChanged(PasswordChanged event) {
+        send(event);
+    }
+
     void send(VerificationEmailRequested event) {
         String link = verificationLink(event.token());
         deliver("verificación", event.username(), event.email(), "Verifica tu correo en SegSoft", link,
@@ -83,6 +95,22 @@ public class AuthMailer {
         String link = unlockLink(event.token());
         deliver("desbloqueo", event.username(), event.email(), "Tu cuenta de SegSoft se bloqueó", link,
                 unlockText(event, link), unlockHtml(event, link));
+    }
+
+    void send(PasswordResetRequested event) {
+        String link = passwordResetLink(event.token());
+        deliver("cambio de contraseña", event.username(), event.email(), "Cambia tu contraseña de SegSoft", link,
+                passwordResetText(event, link), passwordResetHtml(event, link));
+    }
+
+    void send(PasswordChanged event) {
+        String link = UriComponentsBuilder.fromHttpUrl(publicUrl).path("/forgot-password").build().toUriString();
+        deliver("aviso de contraseña cambiada", event.username(), event.email(), "Tu contraseña de SegSoft cambió",
+                link, passwordChangedText(event.username(), link), passwordChangedHtml(event.username(), link));
+    }
+
+    String passwordResetLink(String token) {
+        return link("/reset-password", token);
     }
 
     String verificationLink(String token) {
@@ -179,6 +207,53 @@ public class AuthMailer {
                 "El enlace solo se puede usar una vez y vence cuando termina el bloqueo. Si no fuiste tú, "
                         + "alguien está intentando adivinar tu contraseña: no abras el enlace y avísale al "
                         + "administrador de SegSoft.");
+    }
+
+    private String passwordResetText(PasswordResetRequested event, String link) {
+        return """
+                Hola %s:
+
+                Alguien pidió cambiar la contraseña de tu cuenta de SegSoft. Si fuiste tú, elige una
+                nueva con este enlace:
+
+                %s
+
+                El enlace vence en %d minutos y solo se puede usar una vez. Al cambiarla se cierran
+                todas las sesiones abiertas.
+                Si no lo pediste, ignora este correo: tu contraseña no cambia.
+                """.formatted(event.username(), link, event.validMinutes());
+    }
+
+    private String passwordResetHtml(PasswordResetRequested event, String link) {
+        return page("Cambia tu contraseña", event.username(),
+                "<p>Alguien pidió cambiar la contraseña de tu cuenta de SegSoft. Si fuiste tú, elige una nueva.</p>",
+                "Cambiar contraseña", link,
+                ("El enlace vence en %d minutos y solo se puede usar una vez. Al cambiarla se cierran todas las "
+                        + "sesiones abiertas. Si no lo pediste, ignora este correo: tu contraseña no cambia.")
+                        .formatted(event.validMinutes()));
+    }
+
+    private String passwordChangedText(String username, String link) {
+        return """
+                Hola %s:
+
+                La contraseña de tu cuenta de SegSoft acaba de cambiar y se cerraron todas las
+                sesiones abiertas.
+
+                Si fuiste tú, no tienes que hacer nada.
+                Si no fuiste tú, recupera tu cuenta ahora con este enlace y avísale al administrador
+                de SegSoft:
+
+                %s
+                """.formatted(username, link);
+    }
+
+    private String passwordChangedHtml(String username, String link) {
+        return page("Tu contraseña cambió", username,
+                "<p>La contraseña de tu cuenta de SegSoft acaba de cambiar y se cerraron todas las sesiones "
+                        + "abiertas.</p><p>Si fuiste tú, no tienes que hacer nada.</p>",
+                "No fui yo: recuperar mi cuenta", link,
+                "Si no fuiste tú, recupera tu cuenta con el botón y avísale al administrador de SegSoft.");
     }
 
     /** The HTML layout shared by every email; {@code body} and {@code footer} are trusted text. */

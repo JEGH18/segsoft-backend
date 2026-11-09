@@ -63,6 +63,8 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/verify-email").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/resend-verification").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/unlock").permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/forgot-password").permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/reset-password").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/v1/auth/registration").permitAll()
                     .requestMatchers("/actuator/health/**").permitAll()
                     .requestMatchers("/actuator/info").permitAll()

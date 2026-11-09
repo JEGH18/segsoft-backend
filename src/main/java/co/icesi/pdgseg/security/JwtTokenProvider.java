@@ -30,20 +30,25 @@ public class JwtTokenProvider {
     @Value("${jwt.refresh-token-expiration-ms}")
     private long refreshTokenExpirationMs;
 
-    public String generateAccessToken(String username, List<String> roles) {
+    /** Claim with the account's token_version when the token was issued (0 if absent). */
+    static final String TOKEN_VERSION_CLAIM = "tv";
+
+    public String generateAccessToken(String username, List<String> roles, int tokenVersion) {
         return JWT.create()
                 .withSubject(username)
                 .withClaim("roles", roles)
                 .withClaim("type", "access")
+                .withClaim(TOKEN_VERSION_CLAIM, tokenVersion)
                 .withIssuedAt(new Date())
                 .withExpiresAt(new Date(System.currentTimeMillis() + accessTokenExpirationMs))
                 .sign(Algorithm.HMAC256(secret));
     }
 
-    public String generateRefreshToken(String username) {
+    public String generateRefreshToken(String username, int tokenVersion) {
         return JWT.create()
                 .withSubject(username)
                 .withClaim("type", "refresh")
+                .withClaim(TOKEN_VERSION_CLAIM, tokenVersion)
                 .withIssuedAt(new Date())
                 .withExpiresAt(new Date(System.currentTimeMillis() + refreshTokenExpirationMs))
                 .sign(Algorithm.HMAC256(secret));
@@ -76,6 +81,12 @@ public class JwtTokenProvider {
 
     public String extractTokenType(String token) {
         return decode(token).getClaim("type").asString();
+    }
+
+    /** Tokens issued before V36 carry no version: they count as 0, the initial one. */
+    public int extractTokenVersion(String token) {
+        Integer version = decode(token).getClaim(TOKEN_VERSION_CLAIM).asInt();
+        return version == null ? 0 : version;
     }
 
     public Date extractExpiry(String token) {

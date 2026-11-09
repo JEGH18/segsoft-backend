@@ -17,15 +17,16 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsernameAndEnabledTrue(String username);
     boolean existsByUsernameIgnoreCase(String username);
 
-    /** What every authenticated request checks: four columns, without loading the roles. */
+    /** What every authenticated request checks: five columns, without loading the roles. */
     interface AccessState {
         Boolean getEnabled();
+        Integer getTokenVersion();
         OffsetDateTime getLockedUntil();
         String getEmail();
         OffsetDateTime getEmailVerifiedAt();
     }
 
-    @Query("SELECT u.enabled AS enabled, u.lockedUntil AS lockedUntil, u.email AS email, "
+    @Query("SELECT u.enabled AS enabled, u.tokenVersion AS tokenVersion, u.lockedUntil AS lockedUntil, u.email AS email, "
             + "u.emailVerifiedAt AS emailVerifiedAt FROM User u WHERE u.username = :username")
     Optional<AccessState> findAccessStateByUsername(@Param("username") String username);
 

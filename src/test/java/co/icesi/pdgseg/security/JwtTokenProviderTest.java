@@ -24,19 +24,19 @@ class JwtTokenProviderTest {
 
     @Test
     void generateAccessToken_returnsNonBlankToken() {
-        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"));
+        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"), 0);
         assertThat(token).isNotBlank();
     }
 
     @Test
     void validateToken_returnsTrueForFreshToken() {
-        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"));
+        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"), 0);
         assertThat(provider.validateToken(token)).isTrue();
     }
 
     @Test
     void validateToken_returnsFalseForTamperedSignature() {
-        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"));
+        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"), 0);
         String tampered = token.substring(0, token.lastIndexOf('.') + 1) + "invalidsig";
         assertThat(provider.validateToken(tampered)).isFalse();
     }
@@ -49,7 +49,7 @@ class JwtTokenProviderTest {
         ReflectionTestUtils.setField(expiredProvider, "accessTokenExpirationMs", -1L);
         ReflectionTestUtils.setField(expiredProvider, "refreshTokenExpirationMs", 28_800_000L);
 
-        String token = expiredProvider.generateAccessToken("alice", List.of("DEVELOPER"));
+        String token = expiredProvider.generateAccessToken("alice", List.of("DEVELOPER"), 0);
         assertThat(provider.validateToken(token)).isFalse();
         assertThat(provider.checkToken(token)).isEqualTo(JwtTokenProvider.TokenStatus.EXPIRED);
     }
@@ -67,26 +67,33 @@ class JwtTokenProviderTest {
 
     @Test
     void extractUsername_returnsCorrectSubject() {
-        String token = provider.generateAccessToken("bob", List.of("AUDITOR"));
+        String token = provider.generateAccessToken("bob", List.of("AUDITOR"), 0);
         assertThat(provider.extractUsername(token)).isEqualTo("bob");
     }
 
     @Test
     void extractRoles_returnsCorrectList() {
         List<String> roles = List.of("DEVELOPER", "AUDITOR");
-        String token = provider.generateAccessToken("carol", roles);
+        String token = provider.generateAccessToken("carol", roles, 0);
         assertThat(provider.extractRoles(token)).containsExactlyInAnyOrderElementsOf(roles);
     }
 
     @Test
     void extractTokenType_returnsAccessForAccessToken() {
-        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"));
+        String token = provider.generateAccessToken("alice", List.of("DEVELOPER"), 0);
         assertThat(provider.extractTokenType(token)).isEqualTo("access");
     }
 
     @Test
+    void bothTokensCarryTheTokenVersionOfTheAccount() {
+        assertThat(provider.extractTokenVersion(provider.generateAccessToken("alice", List.of("DEVELOPER"), 3)))
+                .isEqualTo(3);
+        assertThat(provider.extractTokenVersion(provider.generateRefreshToken("alice", 7))).isEqualTo(7);
+    }
+
+    @Test
     void extractTokenType_returnsRefreshForRefreshToken() {
-        String token = provider.generateRefreshToken("alice");
+        String token = provider.generateRefreshToken("alice", 0);
         assertThat(provider.extractTokenType(token)).isEqualTo("refresh");
     }
 
@@ -94,7 +101,7 @@ class JwtTokenProviderTest {
     void refreshToken_cannotBeUsedAsAccessToken() {
         // A refreshToken should NOT set authentication context because the filter
         // checks type == "access". We verify type claim is "refresh".
-        String token = provider.generateRefreshToken("alice");
+        String token = provider.generateRefreshToken("alice", 0);
         assertThat(provider.extractTokenType(token)).isNotEqualTo("access");
     }
 }
