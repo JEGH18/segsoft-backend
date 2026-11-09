@@ -7,6 +7,10 @@ import java.util.UUID;
 public record ApiTokenResponse(
     UUID id,
     String name,
+    String tokenPrefix,
+    String ownerUsername,
     OffsetDateTime createdAt,
-    UUID createdById
+    OffsetDateTime expiresAt,
+    OffsetDateTime lastUsedAt,
+    boolean expired
 ) {}

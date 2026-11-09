@@ -153,7 +153,10 @@ public class SarifReportExporter implements ReportExporter {
         ArrayNode descriptors = driver.putArray("rules");
         rules.values().forEach(rule -> addRuleDescriptor(descriptors, rule));
 
-        run.putObject("automationDetails").put("id", AUTOMATION_CATEGORY + report.reportId());
+        // A document without a reportId is an analysis exported straight for CI (not a persisted report).
+        run.putObject("automationDetails").put("id", AUTOMATION_CATEGORY + (report.reportId() != null
+                ? report.reportId().toString()
+                : "analysis-" + content.metadata().analysisId()));
         addVersionControlProvenance(run, content.metadata());
         addInvocation(run, content);
 
@@ -416,9 +419,11 @@ public class SarifReportExporter implements ReportExporter {
     private void addRunProperties(ObjectNode run, ReportDocument report) {
         ReportContent content = report.content();
         ObjectNode properties = run.putObject("properties");
-        properties.put("reportId", report.reportId().toString());
-        properties.put("reportStatus", report.status());
-        properties.put("reportChecksum", report.checksum());
+        if (report.reportId() != null) {
+            properties.put("reportId", report.reportId().toString());
+            properties.put("reportStatus", report.status());
+            properties.put("reportChecksum", report.checksum());
+        }
         putTimestamp(properties, "reportGeneratedAt", report.generatedAt());
         putIfPresent(properties, "analysisId", content.metadata().analysisId());
         putIfPresent(properties, "repositoryName", sanitizer.field(content.metadata().repositoryName()));

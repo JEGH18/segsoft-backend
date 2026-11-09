@@ -8,5 +8,7 @@ public record CreateApiTokenResponse(
     UUID id,
     String name,
     String token,
-    OffsetDateTime createdAt
+    String tokenPrefix,
+    OffsetDateTime createdAt,
+    OffsetDateTime expiresAt
 ) {}

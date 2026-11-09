@@ -5,94 +5,106 @@ import co.icesi.pdgseg.dto.response.ApiTokenResponse;
 import co.icesi.pdgseg.dto.response.CreateApiTokenResponse;
 import co.icesi.pdgseg.entity.ApiToken;
 import co.icesi.pdgseg.entity.User;
+import co.icesi.pdgseg.exception.ConflictException;
 import co.icesi.pdgseg.exception.ResourceNotFoundException;
 import co.icesi.pdgseg.repository.ApiTokenRepository;
 import co.icesi.pdgseg.repository.UserRepository;
+import co.icesi.pdgseg.security.ApiTokens;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.util.Base64;
+import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
- * Long-lived credentials for CI/CD pipelines, separate from the short-lived
- * web session JWT. Only a SHA-256 hash is ever persisted; the plaintext value
- * is generated, returned once, and then unrecoverable -- same principle as a
- * password.
+ * Long-lived credentials for CI/CD pipelines, separate from the short-lived web session JWT.
+ * Each token belongs to the user who created it and authenticates as that user (see
+ * {@link AccountAccessService#authenticateApiToken}). Only a SHA-256 hash is ever persisted; the
+ * plaintext value is generated, returned once, and then unrecoverable -- same principle as a password.
  */
 @Service
 public class ApiTokenService {
 
-    private static final String TOKEN_PREFIX = "pdgseg_";
-    private static final int TOKEN_RANDOM_BYTES = 32;
+    /** Unexpired tokens one user may hold at a time. */
+    static final int MAX_ACTIVE_TOKENS_PER_USER = 10;
 
     private final ApiTokenRepository apiTokenRepository;
     private final UserRepository userRepository;
-    private final SecureRandom secureRandom = new SecureRandom();
+    private final AuditService auditService;
+    private final Clock clock;
 
-    public ApiTokenService(ApiTokenRepository apiTokenRepository, UserRepository userRepository) {
+    @Autowired
+    public ApiTokenService(ApiTokenRepository apiTokenRepository, UserRepository userRepository,
+                           AuditService auditService) {
+        this(apiTokenRepository, userRepository, auditService, Clock.systemUTC());
+    }
+
+    ApiTokenService(ApiTokenRepository apiTokenRepository, UserRepository userRepository,
+                    AuditService auditService, Clock clock) {
         this.apiTokenRepository = apiTokenRepository;
         this.userRepository = userRepository;
+        this.auditService = auditService;
+        this.clock = clock;
     }
 
     @Transactional
     public CreateApiTokenResponse create(CreateApiTokenRequest request, String username) {
-        User creator = userRepository.findByUsername(username).orElseThrow(
+        User owner = userRepository.findByUsername(username).orElseThrow(
             () -> new IllegalStateException("Usuario autenticado no encontrado: " + username));
 
-        String plaintext = generateToken();
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        if (apiTokenRepository.countByCreatedByUsernameAndExpiresAtAfter(username, now) >= MAX_ACTIVE_TOKENS_PER_USER) {
+            throw new ConflictException("Ya tienes " + MAX_ACTIVE_TOKENS_PER_USER
+                + " tokens de API vigentes. Revoca alguno que no uses antes de crear otro.");
+        }
+
+        String plaintext = ApiTokens.generate();
 
         ApiToken token = new ApiToken();
-        token.setName(request.name());
-        token.setTokenHash(sha256(plaintext));
-        token.setCreatedBy(creator);
+        token.setName(request.name().trim());
+        token.setTokenHash(ApiTokens.hash(plaintext));
+        token.setTokenPrefix(ApiTokens.displayPrefix(plaintext));
+        token.setCreatedBy(owner);
+        token.setExpiresAt(now.plusDays(request.expiresInDaysOrDefault()));
 
         ApiToken saved = apiTokenRepository.save(token);
+        auditService.record("API_TOKEN_CREATED", username, null,
+            Map.of("tokenId", saved.getId().toString(), "expiresAt", saved.getExpiresAt().toString()));
 
-        return new CreateApiTokenResponse(saved.getId(), saved.getName(), plaintext, saved.getCreatedAt());
+        return new CreateApiTokenResponse(saved.getId(), saved.getName(), plaintext, saved.getTokenPrefix(),
+            saved.getCreatedAt(), saved.getExpiresAt());
     }
 
+    /** The caller's own tokens; a SECURITY_ADMIN gets everyone's. */
     @Transactional(readOnly = true)
-    public List<ApiTokenResponse> list() {
-        return apiTokenRepository.findAllByOrderByCreatedAtDesc().stream()
-            .map(t -> new ApiTokenResponse(
-                t.getId(),
-                t.getName(),
-                t.getCreatedAt(),
-                t.getCreatedBy() != null ? t.getCreatedBy().getId() : null))
-            .toList();
+    public List<ApiTokenResponse> list(String username, boolean securityAdmin) {
+        List<ApiToken> tokens = securityAdmin
+            ? apiTokenRepository.findAllByOrderByCreatedAtDesc()
+            : apiTokenRepository.findAllByCreatedByUsernameOrderByCreatedAtDesc(username);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        return tokens.stream().map(t -> toResponse(t, now)).toList();
     }
 
+    /**
+     * Deletes the token, so any pipeline using it stops authenticating at once. A token of another
+     * user is reported as not found (unless the caller is a SECURITY_ADMIN), so ids cannot be probed.
+     */
     @Transactional
-    public void revoke(UUID id) {
-        if (!apiTokenRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Token no encontrado con id: " + id);
-        }
-        apiTokenRepository.deleteById(id);
+    public void revoke(UUID id, String username, boolean securityAdmin) {
+        ApiToken token = apiTokenRepository.findById(id)
+            .filter(t -> securityAdmin || t.getCreatedBy().getUsername().equals(username))
+            .orElseThrow(() -> new ResourceNotFoundException("Token no encontrado con id: " + id));
+        apiTokenRepository.delete(token);
+        auditService.record("API_TOKEN_REVOKED", username, null,
+            Map.of("tokenId", id.toString(), "owner", token.getCreatedBy().getUsername()));
     }
 
-    private String generateToken() {
-        byte[] randomBytes = new byte[TOKEN_RANDOM_BYTES];
-        secureRandom.nextBytes(randomBytes);
-        return TOKEN_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
-    }
-
-    private String sha256(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : bytes) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 no disponible", e);
-        }
+    private static ApiTokenResponse toResponse(ApiToken t, OffsetDateTime now) {
+        return new ApiTokenResponse(t.getId(), t.getName(), t.getTokenPrefix(), t.getCreatedBy().getUsername(),
+            t.getCreatedAt(), t.getExpiresAt(), t.getLastUsedAt(), t.isExpired(now));
     }
 }

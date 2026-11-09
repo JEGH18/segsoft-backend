@@ -159,6 +159,33 @@ public class ReportService {
                 "segsoft-report-" + reportId + "." + exporter.fileExtension(), lookup.hit());
     }
 
+    /**
+     * SARIF of a COMPLETED analysis, for CI pipelines run by the analysis owner (for example the
+     * pdgseg CLI). Built from the same content a report would freeze, but not persisted as a report:
+     * reports stay an audit artifact of AUDITOR and SECURITY_ADMIN. 404 if the analysis does not
+     * exist, 422 if it is not completed, 422 if the file exceeds MAX_EXPORT_SIZE_MB.
+     */
+    @Transactional(readOnly = true)
+    public ExportedReport exportAnalysisSarif(UUID analysisId, String username) {
+        ReportExporter exporter = exporterRegistry.resolve("sarif");
+        Analysis analysis = analysisRepository.findById(analysisId)
+                .orElseThrow(() -> new ResourceNotFoundException("Análisis no encontrado"));
+        if (analysis.getStatus() != AnalysisStatus.COMPLETED) {
+            throw new UnprocessableEntityException(
+                    "Solo se puede exportar a SARIF un análisis completado (estado actual: " + analysis.getStatus() + ")");
+        }
+
+        OffsetDateTime generatedAt = OffsetDateTime.now().truncatedTo(ChronoUnit.MILLIS);
+        ReportContent content = reportGenerator.generate(analysis, username, generatedAt);
+        byte[] bytes = exporter.export(new ReportDocument(null, null, null, generatedAt, content));
+        exportSizeLimit.check(bytes.length);
+
+        auditService.record("ANALYSIS_EXPORTED", username, null,
+                Map.of("analysisId", analysisId.toString(), "format", exporter.format()));
+        return new ExportedReport(bytes, exporter.mediaType(),
+                "segsoft-analysis-" + analysisId + "." + exporter.fileExtension(), false);
+    }
+
     /** History, newest first: by repository, by analysis or all. Each row says whether it verifies. */
     public Page<ReportSummaryResponse> list(UUID repositoryId, UUID analysisId, Pageable pageable) {
         Page<Report> reports;

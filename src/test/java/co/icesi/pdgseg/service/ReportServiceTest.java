@@ -27,6 +27,9 @@ import co.icesi.pdgseg.exception.ExportTooLargeException;
 import co.icesi.pdgseg.exception.ReportIntegrityException;
 import co.icesi.pdgseg.exception.ResourceNotFoundException;
 import co.icesi.pdgseg.exception.SarifValidationException;
+import co.icesi.pdgseg.export.ReportTextSanitizer;
+import co.icesi.pdgseg.export.sarif.SarifReportExporter;
+import co.icesi.pdgseg.export.sarif.SarifSchemaValidator;
 import co.icesi.pdgseg.exception.UnprocessableEntityException;
 import co.icesi.pdgseg.exception.UnsupportedExportFormatException;
 import co.icesi.pdgseg.export.ReportExporter;
@@ -430,6 +433,51 @@ class ReportServiceTest {
     void get_unknownReport_throwsNotFound() {
         when(reportRepository.findById(reportId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.get(reportId, ReportView.TECHNICAL, "auditor"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---- SARIF of an analysis, for CI --------------------------------------------------
+
+    private ReportService serviceWithRealSarifExporter() {
+        SarifReportExporter sarif = new SarifReportExporter(new ReportTextSanitizer(new SecretMaskingService()),
+                new SarifSchemaValidator(), "0.1.0",
+                "https://pi2tools.icesi.edu.co/bitbucket/projects/SEGSOFT/repos/segsoft-backend");
+        return newService(List.of(pdfExporter, sarif), 50);
+    }
+
+    @Test
+    void exportAnalysisSarif_completedAnalysis_returnsValidSarifWithoutPersistingAReport() throws Exception {
+        stubCompletedAnalysis("SELECT * FROM t WHERE id=" + "\"" + " + id");
+
+        var exported = serviceWithRealSarifExporter().exportAnalysisSarif(analysisId, "dev");
+
+        var run = objectMapper.readTree(exported.content()).path("runs").get(0);
+        assertThat(exported.mediaType().toString()).isEqualTo("application/sarif+json");
+        assertThat(exported.fileName()).isEqualTo("segsoft-analysis-" + analysisId + ".sarif");
+        assertThat(run.path("automationDetails").path("id").asText()).isEqualTo("pdg-segsoft/analysis-" + analysisId);
+        assertThat(run.path("properties").has("reportId")).isFalse();
+        assertThat(run.path("properties").path("analysisId").asText()).isEqualTo(analysisId.toString());
+        assertThat(run.path("results")).hasSize(1);
+        assertThat(run.path("results").get(0).path("level").asText()).isEqualTo("error");
+        verify(reportRepository, never()).save(any());
+        verify(auditService).record(eq("ANALYSIS_EXPORTED"), eq("dev"), isNull(), anyMap());
+    }
+
+    @Test
+    void exportAnalysisSarif_analysisNotCompleted_isRejectedNamingTheStatus() {
+        when(analysisRepository.findById(analysisId)).thenReturn(Optional.of(analysis(AnalysisStatus.RUNNING)));
+
+        assertThatThrownBy(() -> serviceWithRealSarifExporter().exportAnalysisSarif(analysisId, "dev"))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("estado actual: RUNNING");
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void exportAnalysisSarif_unknownAnalysis_throwsNotFound() {
+        when(analysisRepository.findById(analysisId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceWithRealSarifExporter().exportAnalysisSarif(analysisId, "dev"))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 

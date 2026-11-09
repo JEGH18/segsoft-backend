@@ -21,6 +21,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String AUTH_PATH = "/api/v1/auth/";
     private static final String CURRENT_USER_PATH = AUTH_PATH + "me";
+    private static final String API_TOKENS_PATH = AUTH_PATH + "api-tokens";
+
+    /** Granted, on top of the owner's roles, to requests authenticated with a CI/CD API token. */
+    public static final String API_TOKEN_AUTHORITY = "API_TOKEN";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final AccountAccessService accountAccessService;
@@ -54,6 +59,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
             String token = resolveToken(request);
+            if (ApiTokens.looksLikeApiToken(token)) {
+                if (authenticateApiToken(token, request, response)) {
+                    filterChain.doFilter(request, response);
+                }
+                return;
+            }
             if (token != null) {
                 JwtTokenProvider.TokenStatus status = jwtTokenProvider.checkToken(token);
 
@@ -107,6 +118,52 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         } finally {
             MDC.clear();
         }
+    }
+
+    /**
+     * CI/CD API token ("pdgseg_..."): authenticates as the token's owner, with the owner's roles plus
+     * the {@link #API_TOKEN_AUTHORITY} authority. It cannot manage API tokens, so a leaked token cannot
+     * mint new ones.
+     *
+     * @return whether the request should go on down the chain; when false the response is written
+     */
+    private boolean authenticateApiToken(String token, HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        if (path.startsWith(API_TOKENS_PATH)) {
+            writeError(response, HttpServletResponse.SC_FORBIDDEN, "API_TOKEN_NOT_ALLOWED",
+                    "Los tokens de API no sirven para gestionar tokens de API. Inicia sesión en la aplicación.",
+                    Map.of());
+            return false;
+        }
+        if (isPublicAuthEndpoint(request)) {
+            // Login, logout, unlock... need no credential: the request goes on unauthenticated.
+            return true;
+        }
+
+        AccountAccessService.ApiTokenIdentity identity;
+        try {
+            identity = accountAccessService.authenticateApiToken(token);
+        } catch (AccountLockedException locked) {
+            writeError(response, 423, "ACCOUNT_LOCKED", locked.getMessage(),
+                    Map.of("minutesLeft", locked.getMinutesLeft()));
+            return false;
+        } catch (AuthException e) {
+            writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_API_TOKEN", e.getMessage(), Map.of());
+            return false;
+        }
+
+        List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+        identity.roles().forEach(role -> authorities.add(new SimpleGrantedAuthority("ROLE_" + role)));
+        authorities.add(new SimpleGrantedAuthority(API_TOKEN_AUTHORITY));
+
+        UserDetails principal = User.withUsername(identity.username())
+                .password("")
+                .authorities(authorities)
+                .build();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, authorities));
+        return true;
     }
 
     private void writeUnauthorized(HttpServletResponse response, String errorCode, String message) throws IOException {

@@ -1,17 +1,22 @@
 package co.icesi.pdgseg.controller;
 
+import co.icesi.pdgseg.dto.report.ExportedReport;
 import co.icesi.pdgseg.dto.request.StartAnalysisRequest;
 import co.icesi.pdgseg.dto.response.AnalysisResponse;
 import co.icesi.pdgseg.dto.response.AnalysisResultsResponse;
 import co.icesi.pdgseg.dto.response.FindingResponse;
 import co.icesi.pdgseg.service.AnalysisService;
 import co.icesi.pdgseg.service.FindingService;
+import co.icesi.pdgseg.service.ReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -29,10 +34,13 @@ public class AnalysisController {
 
     private final AnalysisService analysisService;
     private final FindingService findingService;
+    private final ReportService reportService;
 
-    public AnalysisController(AnalysisService analysisService, FindingService findingService) {
+    public AnalysisController(AnalysisService analysisService, FindingService findingService,
+                              ReportService reportService) {
         this.analysisService = analysisService;
         this.findingService = findingService;
+        this.reportService = reportService;
     }
 
     @PostMapping
@@ -52,6 +60,23 @@ public class AnalysisController {
     @Operation(summary = "Consultar análisis", description = "Retorna el estado actual del análisis")
     public ResponseEntity<AnalysisResponse> get(@PathVariable UUID id) {
         return ResponseEntity.ok(analysisService.getAnalysis(id));
+    }
+
+    @GetMapping("/{id}/sarif")
+    @PreAuthorize("@analysisAuthorizationService.canAccessAnalysis(#id, authentication)")
+    @Operation(summary = "Exportar análisis a SARIF",
+            description = "SARIF 2.1.0 (validado contra el schema oficial) de un análisis COMPLETED, para subirlo a "
+                    + "GitHub Code Scanning u otra plataforma CI/CD. Lo puede pedir el dueño del análisis; no crea "
+                    + "un reporte de auditoría. 404 si no existe, 422 si no está completado o si supera "
+                    + "MAX_EXPORT_SIZE_MB")
+    public ResponseEntity<byte[]> exportSarif(@PathVariable UUID id, Authentication authentication) {
+        ExportedReport exported = reportService.exportAnalysisSarif(id, authentication.getName());
+        return ResponseEntity.ok()
+                .contentType(exported.mediaType())
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(exported.fileName()).build().toString())
+                .cacheControl(CacheControl.noStore())
+                .body(exported.content());
     }
 
     @GetMapping("/{id}/results")
