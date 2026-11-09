@@ -6,9 +6,10 @@ name: SegSoft (dogfooding)
 # Requiere el secreto PDGSEG_TOKEN: un token de API creado en SegSoft (ícono de llave → Tokens de API).
 # Sin él (por ejemplo en PR desde forks) el análisis se omite con un aviso.
 #
-# Por ahora con --dry-run: informa sin bloquear mientras se corrigen los hallazgos existentes. Para que
-# bloquee el merge, quitar --dry-run y marcar este job como required status check de main.
-# Un error técnico (el backend no responde, p. ej. con la VM apagada de 02:00 en adelante) sí lo falla.
+# Falla con hallazgos HIGH (exit code 1) o CRITICAL (2), según failOnSeverity de .pdgseg.yml, y con
+# un error técnico (10), p. ej. si el backend no responde (la VM se apaga de 02:00 en adelante). El
+# SARIF se sube igual, así que los hallazgos quedan anotados en el PR. Para que bloquee el merge, marcar
+# el job «Análisis de SegSoft» como required status check de main.
 
 on:
   push:
@@ -53,7 +54,7 @@ jobs:
 
       - name: pdgseg analyze
         if: steps.token.outputs.present == 'true'
-        run: pdgseg analyze --dry-run --output sarif --output-path results.sarif
+        run: pdgseg analyze --output sarif --output-path results.sarif
 
       - name: Subir el SARIF a Code Scanning
         if: always() && steps.token.outputs.present == 'true' && hashFiles('results.sarif') != ''
