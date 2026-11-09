@@ -49,8 +49,7 @@ jobs:
 
       - name: Instalar pdgseg
         if: steps.token.outputs.present == 'true'
-        # Cuando pdgseg-cli esté publicado en PyPI: pip install pdgseg-cli
-        run: pip install "git+https://github.com/JEGH18/segsoft-cli.git@main"
+        run: pip install "pdgseg-cli>=1,<2"
 
       - name: pdgseg analyze
         if: steps.token.outputs.present == 'true'
