@@ -128,45 +128,143 @@ public class GitCloneService {
                 "git", "clone", "--depth=1", "--branch", branch, cloneUrl, targetDir.toString()
         );
         pb.environment().put("GIT_TERMINAL_PROMPT", "0");
+        // English messages, so classifyFailure can recognize them whatever the server locale is.
+        pb.environment().put("LC_ALL", "C");
+        pb.environment().put("LANG", "C");
         pb.environment().putAll(authHeaderEnvironment(gitUrl, accessToken));
         pb.redirectErrorStream(true);
+        // To a file rather than a pipe: nothing has to drain it while git runs.
+        Path output = Files.createTempFile("git-clone-", ".log");
+        pb.redirectOutput(output.toFile());
 
-        Process process;
         try {
-            process = pb.start();
-        } catch (IOException e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "No se pudo ejecutar git clone");
-        }
+            Process process;
+            try {
+                process = pb.start();
+            } catch (IOException e) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "No se pudo ejecutar git clone");
+            }
 
-        boolean finished;
-        try {
-            finished = process.waitFor(CLONE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            process.destroyForcibly();
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Clonado interrumpido");
-        }
+            boolean finished;
+            try {
+                finished = process.waitFor(CLONE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "Clonado interrumpido");
+            }
 
-        if (!finished) {
-            process.destroyForcibly();
-            throw new ResponseStatusException(HttpStatus.REQUEST_TIMEOUT,
-                    "Timeout al clonar el repositorio (límite: " + CLONE_TIMEOUT_SECONDS + "s)");
-        }
+            if (!finished) {
+                process.destroyForcibly();
+                throw new ResponseStatusException(HttpStatus.REQUEST_TIMEOUT,
+                        "Timeout al clonar el repositorio (límite: " + CLONE_TIMEOUT_SECONDS + "s)");
+            }
 
-        if (process.exitValue() != 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, cloneFailureMessage(accessToken));
+            if (process.exitValue() != 0) {
+                String gitOutput = readTail(output);
+                // git can echo the clone URL, token included: only a redacted copy reaches the log,
+                // and the user gets a fixed message, never git's own text.
+                log.warn("git clone falló: url={} rama={} salida={}",
+                        gitUrl, branch, redact(gitOutput, accessToken));
+                boolean withToken = accessToken != null && !accessToken.isBlank();
+                throw classifyFailure(gitOutput, branch, hostOf(gitUrl), withToken, isBitbucketServer(hostOf(gitUrl)));
+            }
+        } finally {
+            Files.deleteIfExists(output);
         }
     }
 
-    private String cloneFailureMessage(String accessToken) {
-        if (accessToken == null || accessToken.isBlank()) {
-            return "El clonado falló. Verifique que la URL y la rama sean correctas. "
-                    + "Si el repositorio es privado, proporcione un token de acceso.";
+    private static final int MAX_OUTPUT_CHARS = 4000;
+
+    private static String readTail(Path file) {
+        try {
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            return text.length() > MAX_OUTPUT_CHARS ? text.substring(text.length() - MAX_OUTPUT_CHARS) : text;
+        } catch (IOException e) {
+            return "";
         }
-        return "El clonado falló. Verifique que la URL y la rama sean correctas y que el token "
-                + "tenga permiso de lectura sobre el repositorio.";
+    }
+
+    /** Removes the token (raw and URL-encoded) and any user:password@ from git's output. */
+    static String redact(String output, String accessToken) {
+        String result = output.replaceAll("://[^/@\\s]+@", "://***@");
+        if (accessToken != null && !accessToken.isBlank()) {
+            String token = accessToken.trim();
+            result = result.replace(token, "***")
+                    .replace(URLEncoder.encode(token, StandardCharsets.UTF_8), "***");
+        }
+        return result.strip();
+    }
+
+    private static String hostOf(String gitUrl) {
+        try {
+            return new URL(gitUrl).getHost();
+        } catch (MalformedURLException e) {
+            return "";
+        }
+    }
+
+    /**
+     * Turns git's output into a message the user can act on. Patterns come from git 2.x's own
+     * messages (forced to English with LC_ALL=C). With GIT_TERMINAL_PROMPT=0, a server that
+     * answers 401 makes git fail with "could not read Username/Password".
+     */
+    static ResponseStatusException classifyFailure(String gitOutput, String branch, String host,
+                                                   boolean withToken, boolean bitbucketServer) {
+        String out = gitOutput == null ? "" : gitOutput.toLowerCase();
+        String where = host == null || host.isBlank() ? "el servidor Git" : host;
+
+        if (out.contains("not found in upstream") || out.contains("could not find remote branch")) {
+            return new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "La rama \"" + branch + "\" no existe en el repositorio. Revise el nombre (por ejemplo, main o master).");
+        }
+        if (out.contains("could not resolve host") || out.contains("failed to connect")
+                || out.contains("couldn't connect") || out.contains("connection timed out")
+                || out.contains("connection refused") || out.contains("network is unreachable")
+                || out.contains("operation timed out") || out.contains("connection reset")) {
+            return new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "El servidor de SegSoft no pudo conectarse con " + where
+                            + ". Intente más tarde o suba el proyecto como archivo ZIP.");
+        }
+        if (out.contains("ssl certificate") || out.contains("certificate verif") || out.contains("ssl_")
+                || out.contains("openssl") || out.contains("gnutls") || out.contains("tls connect")
+                || out.contains("schannel")) {
+            return new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "No se pudo establecer una conexión segura con " + where
+                            + " (problema con su certificado). Intente más tarde o suba el proyecto como archivo ZIP.");
+        }
+        if (out.contains("returned error: 403")) {
+            return new ResponseStatusException(HttpStatus.BAD_REQUEST, withToken
+                    ? "El token fue aceptado, pero no tiene permiso de lectura sobre este repositorio."
+                    : "El servidor negó el acceso al repositorio. Si es privado, proporcione un token de acceso con permiso de lectura.");
+        }
+        if (out.contains("returned error: 404") || out.contains("repository not found")
+                || (out.contains("repository '") && out.contains("not found"))) {
+            return new ResponseStatusException(HttpStatus.BAD_REQUEST, withToken
+                    ? "No se encontró el repositorio, o el token no tiene acceso a él. Revise la URL y los permisos del token."
+                    : "No se encontró el repositorio. Revise la URL; si es privado, proporcione un token de acceso.");
+        }
+        if (out.contains("could not read username") || out.contains("could not read password")
+                || out.contains("authentication failed") || out.contains("returned error: 401")
+                || out.contains("invalid credentials") || out.contains("access denied")
+                || out.contains("invalid username or")) {
+            if (!withToken) {
+                return new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "El repositorio es privado o no existe. Si es privado, proporcione un token de acceso con permiso de lectura.");
+            }
+            String message = "El servidor rechazó el token de acceso, o el repositorio no existe. "
+                    + "Revise la URL y que el token esté completo y no haya vencido.";
+            if (bitbucketServer) {
+                message += " En p2tools debe ser un token HTTP de acceso (Administrar cuenta → Tokens de acceso HTTP)"
+                        + " con permiso de lectura; la contraseña de la cuenta no sirve.";
+            }
+            return new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, withToken
+                ? "El clonado falló. Verifique que la URL y la rama sean correctas y que el token tenga permiso de lectura sobre el repositorio."
+                : "El clonado falló. Verifique que la URL y la rama sean correctas. Si el repositorio es privado, proporcione un token de acceso.");
     }
 
     /**

@@ -2,16 +2,20 @@ package co.icesi.pdgseg.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.file.Path;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class GitCloneServiceTest {
 
@@ -209,6 +213,160 @@ class GitCloneServiceTest {
     void validateBranchName_null_doesNotThrow() {
         // null branch is handled by the service (defaults to "main")
         assertThatCode(() -> invokeValidateBranchName(null)).doesNotThrowAnyException();
+    }
+
+    // --- failure messages from git's output (samples are real git 2.x output) ---
+
+    private static final String P2TOOLS_HOST = "pi2tools.icesi.edu.co";
+
+    @Test
+    void classifyFailure_missingBranch_namesTheBranch() {
+        var ex = GitCloneService.classifyFailure(
+                "Cloning into 'out'...\nfatal: Remote branch nope not found in upstream origin\n",
+                "nope", "github.com", false, false);
+        assertStatusCode(ex, HttpStatus.BAD_REQUEST);
+        assertThat(ex.getReason()).contains("La rama \"nope\" no existe");
+    }
+
+    @Test
+    void classifyFailure_unknownHost_saysTheServerCouldNotConnect() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: unable to access 'https://x.invalid/y.git/': Could not resolve host: x.invalid",
+                "main", "x.invalid", false, false);
+        assertStatusCode(ex, HttpStatus.BAD_GATEWAY);
+        assertThat(ex.getReason()).contains("no pudo conectarse con x.invalid");
+    }
+
+    @Test
+    void classifyFailure_connectTimeout_saysTheServerCouldNotConnect() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: unable to access 'https://h/r.git/': Failed to connect to h port 443 after 130000 ms: Couldn't connect to server",
+                "main", "h", true, true);
+        assertStatusCode(ex, HttpStatus.BAD_GATEWAY);
+    }
+
+    @Test
+    void classifyFailure_badCertificate_saysSecureConnectionFailed() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: unable to access 'https://h/r.git/': SSL certificate problem: unable to get local issuer certificate",
+                "main", "h", false, false);
+        assertStatusCode(ex, HttpStatus.BAD_GATEWAY);
+        assertThat(ex.getReason()).contains("conexión segura");
+    }
+
+    @Test
+    void classifyFailure_p2toolsRejectsTheBearerToken_explainsWhichTokenToUse() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: could not read Username for 'https://pi2tools.icesi.edu.co': terminal prompts disabled",
+                "main", P2TOOLS_HOST, true, true);
+        assertStatusCode(ex, HttpStatus.BAD_REQUEST);
+        assertThat(ex.getReason())
+                .contains("rechazó el token")
+                .contains("token HTTP de acceso")
+                .contains("la contraseña de la cuenta no sirve");
+    }
+
+    @Test
+    void classifyFailure_githubRejectsTheToken_saysTheTokenWasRejectedWithoutP2toolsHint() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: could not read Password for 'https://***@github.com': terminal prompts disabled",
+                "main", "github.com", true, false);
+        assertThat(ex.getReason()).contains("rechazó el token").doesNotContain("p2tools");
+    }
+
+    @Test
+    void classifyFailure_bitbucketCloudAuthenticationFailed_saysTheTokenWasRejected() {
+        var ex = GitCloneService.classifyFailure(
+                "remote: You may not have access to this repository or it no longer exists in this workspace.\n"
+                        + "fatal: Authentication failed for 'https://bitbucket.org/a/b.git/'",
+                "main", "bitbucket.org", true, false);
+        assertThat(ex.getReason()).contains("rechazó el token");
+    }
+
+    @Test
+    void classifyFailure_privateRepoWithoutToken_asksForAToken() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+                "main", "github.com", false, false);
+        assertThat(ex.getReason()).contains("privado o no existe").contains("proporcione un token");
+    }
+
+    @Test
+    void classifyFailure_forbidden_saysTheTokenLacksReadPermission() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 403",
+                "main", "h", true, true);
+        assertThat(ex.getReason()).contains("no tiene permiso de lectura");
+    }
+
+    @Test
+    void classifyFailure_repositoryNotFound_asksToCheckTheUrl() {
+        var ex = GitCloneService.classifyFailure(
+                "fatal: repository 'https://pi2tools.icesi.edu.co/bitbucket/scm/segsoft/x.git/' not found",
+                "main", P2TOOLS_HOST, true, true);
+        assertThat(ex.getReason()).contains("No se encontró el repositorio");
+    }
+
+    @Test
+    void classifyFailure_unknownOutput_fallsBackToTheGenericMessage() {
+        var ex = GitCloneService.classifyFailure("fatal: something unexpected", "main", "h", false, false);
+        assertStatusCode(ex, HttpStatus.BAD_REQUEST);
+        assertThat(ex.getReason()).startsWith("El clonado falló");
+    }
+
+    @Test
+    void redact_removesTheTokenAndAnyUserinfo() {
+        String out = "fatal: could not read Password for 'https://ghp_secret@github.com': x\n"
+                + "fatal: Authentication failed for 'https://x-token-auth:ATATT%3DAB@bitbucket.org/a.git/'\n"
+                + "token ATATT=AB again";
+        assertThat(GitCloneService.redact(out, "ATATT=AB"))
+                .doesNotContain("ghp_secret")
+                .doesNotContain("ATATT")
+                .contains("https://***@github.com");
+    }
+
+    @Test
+    void clone_missingBranchOnARealRepository_reportsTheBranch(@TempDir Path tmp) throws Exception {
+        assumeTrue(gitAvailable(), "git no está instalado");
+        Path bare = tmp.resolve("origin.git");
+        run(tmp, "git", "init", "-q", "--bare", bare.toString());
+        Path work = tmp.resolve("work");
+        run(tmp, "git", "init", "-q", work.toString());
+        run(work, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x");
+        run(work, "git", "push", "-q", bare.toUri().toString(), "HEAD:refs/heads/main");
+
+        // executeClone skips the domain check, so a local file:// repository can stand in for a server.
+        assertThatThrownBy(() -> invokeExecuteClone(bare.toUri().toString(), "no-existe", tmp.resolve("out")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("La rama \"no-existe\" no existe");
+    }
+
+    private static boolean gitAvailable() {
+        try {
+            return new ProcessBuilder("git", "--version").start().waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void run(Path dir, String... command) throws Exception {
+        Process p = new ProcessBuilder(command).directory(dir.toFile()).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes());
+        if (p.waitFor() != 0) throw new IllegalStateException(String.join(" ", command) + ": " + out);
+    }
+
+    private void invokeExecuteClone(String url, String branch, Path target) {
+        try {
+            var method = GitCloneService.class.getDeclaredMethod(
+                    "executeClone", String.class, String.class, Path.class, String.class);
+            method.setAccessible(true);
+            method.invoke(service, url, branch, target, null);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            if (e.getCause() instanceof RuntimeException re) throw re;
+            throw new RuntimeException(e);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // --- helpers ---
