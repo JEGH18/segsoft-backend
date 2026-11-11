@@ -125,7 +125,10 @@ public class GitCloneService {
     private void executeClone(String gitUrl, String branch, Path targetDir, String accessToken) throws IOException {
         String cloneUrl = buildAuthenticatedUrl(gitUrl, accessToken);
         ProcessBuilder pb = new ProcessBuilder(
-                "git", "clone", "--depth=1", "--branch", branch, cloneUrl, targetDir.toString()
+                // core.symlinks=false: a symbolic link in the repository is checked out as a plain
+                // file holding the link target, so nothing in the sandbox points outside it.
+                "git", "-c", "core.symlinks=false", "clone", "--depth=1", "--branch", branch,
+                cloneUrl, targetDir.toString()
         );
         pb.environment().put("GIT_TERMINAL_PROMPT", "0");
         // English messages, so classifyFailure can recognize them whatever the server locale is.

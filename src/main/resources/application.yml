@@ -86,13 +86,18 @@ engine:
   base-url: ${ENGINE_BASE_URL:http://localhost:18001}
   service-token: ${INTERNAL_SERVICE_TOKEN:dev-internal-token}
   connect-timeout-ms: 5000
-  read-timeout-ms: 60000
+  # A batch request can take up to the engine's BATCH_TIMEOUT_SECONDS (120 s by default).
+  read-timeout-ms: ${ENGINE_READ_TIMEOUT_MS:180000}
+  # Files sent to the engine per request (one rule over many files).
+  batch-size: ${ENGINE_BATCH_SIZE:100}
 
 sandbox:
   root: ${SANDBOX_ROOT:/tmp/pdgseg-sandbox}
   max-repo-size-mb: ${MAX_REPO_SIZE_MB:100}
   max-file-count: ${MAX_FILE_COUNT:5000}
   max-compression-ratio: ${MAX_COMPRESSION_RATIO:100}
+  # Absolute limit on what a ZIP may expand to, whatever its compression ratio.
+  max-extracted-size-mb: ${MAX_EXTRACTED_SIZE_MB:500}
   allowed-git-domains: ${ALLOWED_GIT_DOMAINS:github.com,gitlab.com,bitbucket.org,pi2tools.icesi.edu.co}
   # Bitbucket Server / Data Center: the access token is sent as a Bearer header.
   bitbucket-server-hosts: ${BITBUCKET_SERVER_HOSTS:pi2tools.icesi.edu.co}

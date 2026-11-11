@@ -11,6 +11,15 @@ exclusions:
     - .vscode/
     - coverage/
     - .nyc_output/
+    - .venv/
+    - venv/
+    - .tox/
+    - .pytest_cache/
+    - .mypy_cache/
+    - .gradle/
+    - .next/
+    - .nuxt/
+    - .cache/
   files:
     - "*.min.js"
     - "*.pyc"

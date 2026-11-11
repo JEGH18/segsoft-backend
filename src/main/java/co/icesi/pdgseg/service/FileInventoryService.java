@@ -13,13 +13,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -82,8 +79,7 @@ public class FileInventoryService {
             Map.entry("dart", "dart")
     );
 
-    private List<String> dirExclusionNames;
-    private List<PathMatcher> fileExclusionMatchers;
+    private SandboxExclusions exclusions;
 
     private final RepositoryRepository repositoryRepository;
     private final RepositoryFileRepository repositoryFileRepository;
@@ -101,26 +97,9 @@ public class FileInventoryService {
     }
 
     @PostConstruct
-    @SuppressWarnings("unchecked")
-    void loadExclusions() throws IOException {
-        ClassPathResource resource = new ClassPathResource("default-exclusions.yml");
-        try (InputStream is = resource.getInputStream()) {
-            Yaml yaml = new Yaml();
-            Map<String, Object> root = yaml.load(is);
-            Map<String, Object> exclusions = (Map<String, Object>) root.get("exclusions");
-
-            List<String> dirs = (List<String>) exclusions.get("directories");
-            List<String> files = (List<String>) exclusions.get("files");
-
-            this.dirExclusionNames = dirs.stream()
-                    .map(d -> d.endsWith("/") ? d.substring(0, d.length() - 1) : d)
-                    .toList();
-
-            FileSystem fs = FileSystems.getDefault();
-            this.fileExclusionMatchers = files.stream()
-                    .map(f -> fs.getPathMatcher("glob:" + f))
-                    .toList();
-        }
+    void loadExclusions() {
+        // default-exclusions.yml, shared with the ZIP extraction.
+        this.exclusions = SandboxExclusions.defaults();
     }
 
     public void triggerInventory(UUID repositoryId) {
@@ -165,8 +144,17 @@ public class FileInventoryService {
 
             List<RepositoryFile> files = new ArrayList<>();
             try (Stream<Path> stream = Files.walk(sandboxPath)) {
-                stream.filter(Files::isRegularFile)
-                        .forEach(filePath -> {
+                stream.forEach(filePath -> {
+                            // A symbolic link (possible in a cloned repository) is never followed:
+                            // it could point outside the sandbox, e.g. to /proc/self/environ.
+                            if (Files.isSymbolicLink(filePath)) {
+                                excludedCount.incrementAndGet();
+                                log.warn("Skipping symbolic link {}", sandboxPath.relativize(filePath));
+                                return;
+                            }
+                            if (!Files.isRegularFile(filePath, LinkOption.NOFOLLOW_LINKS)) {
+                                return;
+                            }
                             if (isExcluded(filePath, sandboxPath)) {
                                 excludedCount.incrementAndGet();
                                 return;
@@ -214,22 +202,7 @@ public class FileInventoryService {
     }
 
     boolean isExcluded(Path filePath, Path sandboxRoot) {
-        Path relative = sandboxRoot.relativize(filePath);
-
-        for (int i = 0; i < relative.getNameCount(); i++) {
-            String segment = relative.getName(i).toString();
-            if (dirExclusionNames.contains(segment)) {
-                return true;
-            }
-        }
-
-        String filename = filePath.getFileName().toString();
-        for (PathMatcher matcher : fileExclusionMatchers) {
-            if (matcher.matches(Paths.get(filename))) {
-                return true;
-            }
-        }
-        return false;
+        return exclusions.isExcluded(filePath, sandboxRoot);
     }
 
     String detectLanguage(String filename) {
@@ -281,7 +254,7 @@ public class FileInventoryService {
     private long countFiles(Path sandboxPath) {
         if (!Files.exists(sandboxPath)) return 0;
         try (Stream<Path> stream = Files.walk(sandboxPath)) {
-            return stream.filter(Files::isRegularFile).count();
+            return stream.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)).count();
         } catch (IOException e) {
             log.warn("Could not count files in {}", sandboxPath, e);
             return 0;

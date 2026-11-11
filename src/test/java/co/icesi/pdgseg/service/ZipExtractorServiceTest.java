@@ -126,7 +126,107 @@ class ZipExtractorServiceTest {
         assertThat(result.fileCount()).isEqualTo(1);
     }
 
+    @Test
+    void extract_projectZippedWithDependencies_skipsExcludedDirectoriesAndDoesNotCountThem() throws IOException {
+        // A frontend zipped as-is: src/ plus thousands of files in node_modules/ and .git/.
+        // Those used to count against the file limit (100 here) and the upload was rejected.
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            putEntry(zos, "frontend/src/App.tsx", "export const App = () => null;");
+            putEntry(zos, "frontend/package.json", "{}");
+            for (int i = 0; i < 150; i++) {
+                putEntry(zos, "frontend/node_modules/pkg" + i + "/index.js", "module.exports = " + i);
+            }
+            putEntry(zos, "frontend/.git/HEAD", "ref: refs/heads/main");
+            putEntry(zos, "frontend/dist/assets/index.js", "bundle");
+            putEntry(zos, "frontend/src/vendor.min.js", "min");
+        }
+        Path dest = tempDir.resolve("out-excluded");
+
+        ZipExtractorService.ExtractionResult result =
+                service.extract(multipartZip("frontend.zip", baos.toByteArray()), dest);
+
+        assertThat(result.fileCount()).isEqualTo(2);
+        assertThat(result.excludedCount()).isEqualTo(153);
+        assertThat(dest.resolve("frontend/src/App.tsx")).exists();
+        assertThat(dest.resolve("frontend/node_modules")).doesNotExist();
+        assertThat(dest.resolve("frontend/.git")).doesNotExist();
+        assertThat(dest.resolve("frontend/dist")).doesNotExist();
+    }
+
+    @Test
+    void extract_windowsBackslashEntryNames_areNormalizedAndExcluded() throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            putEntry(zos, "app\\src\\Main.java", "class Main {}");
+            putEntry(zos, "app\\node_modules\\x\\index.js", "x");
+        }
+        Path dest = tempDir.resolve("out-backslash");
+
+        ZipExtractorService.ExtractionResult result =
+                service.extract(multipartZip("win.zip", baos.toByteArray()), dest);
+
+        assertThat(result.fileCount()).isEqualTo(1);
+        assertThat(result.excludedCount()).isEqualTo(1);
+        assertThat(dest.resolve("app/src/Main.java")).exists();
+    }
+
+    @Test
+    void extract_onlyExcludedContent_throwsBadRequestWithExplanation() throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            putEntry(zos, "node_modules/a/index.js", "a");
+        }
+
+        assertThatThrownBy(() -> service.extract(multipartZip("deps.zip", baos.toByteArray()), tempDir.resolve("o")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("node_modules")
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value())
+                        .isEqualTo(HttpStatus.BAD_REQUEST.value()));
+    }
+
+    @Test
+    void extract_aboveAbsoluteExtractedLimit_stopsWhileWritingAndCleansUp() throws IOException {
+        // Ratio limit high enough not to trip: only the absolute limit (1 MB) applies.
+        ReflectionTestUtils.setField(service, "maxCompressionRatio", 100_000L);
+        ReflectionTestUtils.setField(service, "maxExtractedSizeMb", 1L);
+        byte[] zipBytes = buildZipWithEntry("big.bin", new byte[3 * 1024 * 1024]);
+        Path dest = tempDir.resolve("out-abs");
+
+        assertThatThrownBy(() -> service.extract(multipartZip("abs.zip", zipBytes), dest))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("1 MB")
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value())
+                        .isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE.value()));
+        assertThat(dest).doesNotExist();
+    }
+
+    @Test
+    void extract_zipBombInsideExcludedDirectory_isStillDetected() throws IOException {
+        byte[] zipBytes = buildZipWithEntry("node_modules/zeros.bin", new byte[5 * 1024 * 1024]);
+
+        assertThatThrownBy(() -> service.extract(multipartZip("hidden-bomb.zip", zipBytes), tempDir.resolve("hb")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("ZIP bomb");
+    }
+
+    @Test
+    void extract_notAZip_throwsBadRequest() {
+        MockMultipartFile file = multipartZip("fake.zip", "this is not a zip".getBytes());
+
+        assertThatThrownBy(() -> service.extract(file, tempDir.resolve("fake")))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value())
+                        .isEqualTo(HttpStatus.BAD_REQUEST.value()));
+    }
+
     // --- helpers ---
+
+    private void putEntry(ZipOutputStream zos, String name, String content) throws IOException {
+        zos.putNextEntry(new ZipEntry(name));
+        zos.write(content.getBytes());
+        zos.closeEntry();
+    }
 
     private byte[] buildZip(int fileCount, int fileSize) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();

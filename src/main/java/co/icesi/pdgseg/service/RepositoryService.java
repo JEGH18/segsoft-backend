@@ -172,7 +172,7 @@ public class RepositoryService {
 
     private int countFiles(Path dir) {
         try (var stream = Files.walk(dir)) {
-            return (int) stream.filter(Files::isRegularFile).count();
+            return (int) stream.filter(p -> Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)).count();
         } catch (IOException e) {
             return 0;
         }

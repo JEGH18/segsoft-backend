@@ -34,6 +34,8 @@ services:
     restart: unless-stopped
     environment:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Falta INTERNAL_SERVICE_TOKEN en .env}
+      # El motor solo lee archivos dentro de esta carpeta (ni rutas con .. ni enlaces simbólicos que salgan de ella).
+      SANDBOX_ROOT: /tmp/pdgseg-sandbox
     volumes:
       - sandbox:/tmp/pdgseg-sandbox
     # Sin "ports": el motor solo es accesible desde la red interna de Docker.
