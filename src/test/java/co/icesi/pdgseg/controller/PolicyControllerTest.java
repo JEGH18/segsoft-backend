@@ -41,6 +41,7 @@ class PolicyControllerTest {
     @Autowired ObjectMapper objectMapper;
 
     @MockBean PolicyService policyService;
+    @MockBean co.icesi.pdgseg.service.AuditService auditService;
     @MockBean JwtTokenProvider jwtTokenProvider;
     @MockBean AccountAccessService accountAccessService;
     @MockBean UserDetailsServiceImpl userDetailsService;

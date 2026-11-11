@@ -43,6 +43,7 @@ class PolicyControllerSearchTest {
     @Autowired MockMvc mockMvc;
 
     @MockBean PolicyService policyService;
+    @MockBean co.icesi.pdgseg.service.AuditService auditService;
     @MockBean JwtTokenProvider jwtTokenProvider;
     @MockBean AccountAccessService accountAccessService;
     @MockBean UserDetailsServiceImpl userDetailsService;
