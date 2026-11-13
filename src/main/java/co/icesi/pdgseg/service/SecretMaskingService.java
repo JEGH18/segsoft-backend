@@ -41,7 +41,9 @@ public class SecretMaskingService {
             // Google API key
             Pattern.compile("\\bAIza[0-9A-Za-z_\\-]{35}"),
             // JSON Web Token
-            Pattern.compile("\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}")
+            Pattern.compile("\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}"),
+            // SegSoft CI/CD API token (ApiTokens: "pdgseg_" + 43 base64url characters)
+            Pattern.compile("\\bpdgseg_[A-Za-z0-9_-]{20,}")
     );
 
     private static final Pattern BEARER_PATTERN = Pattern.compile("(?i)(bearer\\s+)[A-Za-z0-9\\-._~+/]{16,}=*");

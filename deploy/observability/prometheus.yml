@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # /actuator/prometheus solo responde a cuentas SECURITY_ADMIN: Prometheus se autentica con
+  # un token de API de una de ellas (archivo prometheus-token, nunca en el repositorio).
+  - job_name: segsoft-backend
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/backend-token
+    static_configs:
+      # "backend" en la red del despliegue. Con el backend corriendo en el equipo
+      # (mvn spring-boot:run, perfil dev, puerto 8090): host.docker.internal:8090.
+      - targets: ["backend:8080"]
+        labels:
+          service: segsoft-backend

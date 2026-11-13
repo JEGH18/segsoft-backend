@@ -10,7 +10,9 @@ import co.icesi.pdgseg.dto.snapshot.RuleSnapshotDto;
 import co.icesi.pdgseg.entity.*;
 import co.icesi.pdgseg.entity.enums.AnalysisStatus;
 import co.icesi.pdgseg.entity.enums.SeverityLevel;
+import co.icesi.pdgseg.observability.AnalysisMetrics;
 import co.icesi.pdgseg.repository.*;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -41,6 +43,7 @@ class AnalysisExecutionServiceTest {
     private final AnalysisSnapshotService snapshotService = mock(AnalysisSnapshotService.class);
     private final EngineClient engineClient = mock(EngineClient.class);
     private final SecretMaskingService masking = mock(SecretMaskingService.class);
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private final UUID analysisId = UUID.randomUUID();
     private final UUID repositoryId = UUID.randomUUID();
@@ -75,7 +78,8 @@ class AnalysisExecutionServiceTest {
         service = new AnalysisExecutionService(
                 analysisRepository, repositoryFileRepository, repositoryJpaRepository, findingRepository,
                 policyResultRepository, ruleExecutionErrorRepository, policyRepository, ruleRepository,
-                snapshotService, engineClient, masking, mock(PlatformTransactionManager.class), 2);
+                snapshotService, engineClient, masking, new AnalysisMetrics(meterRegistry),
+                mock(PlatformTransactionManager.class), 2);
     }
 
     private RepositoryFile file(String path) {
@@ -127,6 +131,14 @@ class AnalysisExecutionServiceTest {
         assertThat(analysis.getStatus()).isEqualTo(AnalysisStatus.COMPLETED);
         verify(policyResultRepository).deleteByAnalysisId(analysisId);
         verify(policyResultRepository).save(any(PolicyResult.class));
+
+        // Metrics: one engine request timed per batch, the engine's error counted by its code.
+        assertThat(executed("COMPLETED")).isEqualTo(1.0);
+        assertThat(meterRegistry.get("analyses.running.current").gauge().value()).isZero();
+        assertThat(meterRegistry.get("rule.execution.duration")
+                .tags("ruleType", "PATTERN_REGEX", "outcome", "success").timer().count()).isEqualTo(2);
+        assertThat(meterRegistry.get("rule.execution.errors")
+                .tags("ruleType", "PATTERN_REGEX", "errorCode", "RULE_TIMEOUT").counter().count()).isEqualTo(1.0);
     }
 
     @Test
@@ -143,6 +155,22 @@ class AnalysisExecutionServiceTest {
         assertThat(error.getValue().getErrorCode()).isEqualTo("ENGINE_ERROR");
         assertThat(error.getValue().getMessage()).contains("2 archivos");
         assertThat(analysis.getStatus()).isEqualTo(AnalysisStatus.COMPLETED);
+        assertThat(meterRegistry.get("rule.execution.errors")
+                .tags("errorCode", "ENGINE_ERROR").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("rule.execution.duration").tags("outcome", "error").timer().count())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void aFailedAnalysisIsCountedAsFailedAndStopsCountingAsRunning() {
+        when(snapshotService.getSnapshot(analysisId)).thenThrow(new IllegalStateException("snapshot corrupto"));
+
+        service.runAnalysis(analysisId, "trace-4");
+
+        assertThat(analysis.getStatus()).isEqualTo(AnalysisStatus.FAILED);
+        assertThat(executed("FAILED")).isEqualTo(1.0);
+        assertThat(executed("COMPLETED")).isZero();
+        assertThat(meterRegistry.get("analyses.running.current").gauge().value()).isZero();
     }
 
     @Test
@@ -157,5 +185,10 @@ class AnalysisExecutionServiceTest {
         verify(engineClient, times(1)).executeRuleBatch(any(), any());
         verify(policyResultRepository, never()).save(any());
         assertThat(analysis.getStatus()).isEqualTo(AnalysisStatus.CANCELLED);
+        assertThat(executed("CANCELLED")).isEqualTo(1.0);
+    }
+
+    private double executed(String status) {
+        return meterRegistry.get("analyses.executed").tag("status", status).counter().count();
     }
 }

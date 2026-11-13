@@ -1,0 +1,61 @@
+# Demostración de observabilidad: Prometheus lee /actuator/prometheus del backend y Grafana
+# muestra el dashboard "SegSoft - Backend". Guía: deploy/observability/README.md.
+#
+# Se conecta a la red del despliegue (deploy/docker-compose.yml, proyecto "segsoft"), así que
+# ese stack debe estar encendido; con el backend corriendo fuera de Docker, basta crear la red
+# una vez (docker network create segsoft_default). Requiere el archivo prometheus-token (token de API de una
+# cuenta SECURITY_ADMIN) y GRAFANA_ADMIN_PASSWORD en el entorno o en un .env junto a este archivo.
+#
+#   docker compose up -d     # Grafana en http://127.0.0.1:3000, Prometheus en http://127.0.0.1:9090
+#   docker compose down      # apagar (conserva los datos en los volúmenes)
+
+name: segsoft-observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-token:/etc/prometheus/backend-token:ro
+      - prometheus_data:/prometheus
+    networks:
+      - segsoft
+    # Para leer un backend que corre en el equipo, fuera de Docker (ver prometheus.yml).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Solo desde la propia máquina (en la VM, con un túnel SSH).
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Falta GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/segsoft-backend.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - segsoft
+    ports:
+      - "127.0.0.1:3000:3000"
+
+networks:
+  segsoft:
+    external: true
+    name: ${SEGSOFT_NETWORK:-segsoft_default}
+
+volumes:
+  prometheus_data:
+  grafana_data:

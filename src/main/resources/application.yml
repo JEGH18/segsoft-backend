@@ -1,4 +1,7 @@
 spring:
+  main:
+    # The log is JSON lines (logback-spring.xml); the ASCII banner would break it.
+    banner-mode: off
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/pdgseg_test}
     username: ${DB_USER:pdgseg_test}
@@ -47,6 +50,12 @@ spring:
 server:
   port: 8080
   shutdown: graceful
+  # Spring Boot's own /error page (errors outside the controllers): never the stack trace nor
+  # the exception message; GlobalExceptionHandler covers the controllers.
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-exception: false
 
 jwt:
   private-key: ${JWT_PRIVATE_KEY:unused}
@@ -90,6 +99,8 @@ engine:
   read-timeout-ms: ${ENGINE_READ_TIMEOUT_MS:180000}
   # Files sent to the engine per request (one rule over many files).
   batch-size: ${ENGINE_BATCH_SIZE:100}
+  # Ping of /actuator/health/readiness to the engine's /internal/health.
+  health-timeout-ms: ${ENGINE_HEALTH_TIMEOUT_MS:2000}
 
 sandbox:
   root: ${SANDBOX_ROOT:/tmp/pdgseg-sandbox}
@@ -122,6 +133,7 @@ report:
 traceability:
   retention-days: ${TRACEABILITY_RETENTION_DAYS:365}
 
+# Observability (healthchecks, Prometheus metrics, JSON logs with traceId): deploy/observability/README.md
 management:
   endpoints:
     web:
@@ -129,15 +141,41 @@ management:
         include: health,info,prometheus
   endpoint:
     health:
+      # Details (response times, errors) only for authenticated users.
       show-details: when-authorized
       probes:
         enabled: true
+      group:
+        # Is the process alive? Nothing but its own state: never restart it for a dependency.
+        liveness:
+          include: livenessState
+          show-details: never
+          show-components: never
+        # Can it serve requests? 503 as soon as one dependency is down. The status of each
+        # dependency is public; its details are not.
+        readiness:
+          include: readinessState,postgres,sandbox,engine
+          show-components: always
+          show-details: when-authorized
   health:
     probes:
       enabled: true
+    # Replaced by the "postgres" indicator (SELECT 1).
+    db:
+      enabled: false
     # An SMTP outage must not mark the backend as down, nor every health check open a connection.
     mail:
       enabled: false
+  info:
+    build:
+      enabled: true
+  metrics:
+    tags:
+      application: segsoft-backend
+    distribution:
+      # Buckets for the HTTP latency percentiles of the Grafana dashboard.
+      percentiles-histogram:
+        http.server.requests: true
 
 logging:
   config: classpath:logback-spring.xml

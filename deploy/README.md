@@ -152,7 +152,7 @@ Comprobar:
 
 ```bash
 docker compose ps                                  # los 4 servicios en "running" / "healthy"
-curl https://api.<dominio>/actuator/health         # {"status":"UP",...}
+curl https://api.<dominio>/actuator/health/readiness   # 200 si PostgreSQL, sandbox y motor responden
 docker compose logs backend | grep "Cuentas de producción listas"
 ```
 
@@ -185,12 +185,16 @@ Entrar en `https://app.<dominio>` con `admin` y analizar los tres ZIP de
 |---|---|
 | Apagar entre sesiones de prueba (conserva los datos) | `docker compose stop` |
 | Encender | `docker compose start` |
-| Ver logs | `docker compose logs -f backend` |
+| Ver logs (JSON, una línea por evento) | `docker compose logs -f backend engine` |
+| Buscar todo lo de una petición o un análisis (el `traceId` que devolvió el error) | `docker compose logs backend engine \| grep <traceId>` |
 | Actualizar a la última versión | `git -C .. pull && git -C ../../segsoft-motorpython pull && docker compose up -d --build` |
 | Respaldo de la base de datos | `docker compose exec -T postgres pg_dump -U segsoft segsoft > respaldo-$(date +%F).sql` |
 | Restaurar un respaldo | `docker compose exec -T postgres psql -U segsoft segsoft < respaldo.sql` |
 | Borrar todo, incluidos los datos | `docker compose down -v` |
 | Desbloquear una cuenta (5 intentos fallidos la bloquean 30 minutos; las que tienen correo verificado reciben un enlace) | `docker compose exec -T postgres psql -U segsoft segsoft -c "UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE username = '<usuario>';"` |
+
+**Healthchecks, métricas, logs con traceId y el dashboard de Grafana:**
+[`observability/README.md`](observability/README.md).
 
 **Cambiar contraseñas o cuentas:** editar `SEGSOFT_ACCOUNTS` en `deploy/.env`
 (`usuario:ROL:contraseña`, separadas por `;`; roles `DEVELOPER`, `AUDITOR` o `SECURITY_ADMIN`;

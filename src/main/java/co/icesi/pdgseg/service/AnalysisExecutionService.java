@@ -11,7 +11,10 @@ import co.icesi.pdgseg.entity.*;
 import co.icesi.pdgseg.entity.enums.AnalysisStatus;
 import co.icesi.pdgseg.entity.enums.PolicyComplianceStatus;
 import co.icesi.pdgseg.entity.enums.SeverityLevel;
+import co.icesi.pdgseg.observability.AnalysisMetrics;
 import co.icesi.pdgseg.repository.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
@@ -22,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.*;
 
@@ -41,6 +45,7 @@ import java.util.*;
 @Service
 public class AnalysisExecutionService {
 
+    private static final Logger log = LoggerFactory.getLogger(AnalysisExecutionService.class);
     private static final List<SeverityLevel> HIGH_OR_CRITICAL = List.of(SeverityLevel.HIGH, SeverityLevel.CRITICAL);
     private static final List<SeverityLevel> LOW_OR_MEDIUM = List.of(SeverityLevel.LOW, SeverityLevel.MEDIUM);
 
@@ -55,6 +60,7 @@ public class AnalysisExecutionService {
     private final AnalysisSnapshotService analysisSnapshotService;
     private final EngineClient engineClient;
     private final SecretMaskingService secretMaskingService;
+    private final AnalysisMetrics metrics;
     private final TransactionTemplate transactionTemplate;
     private final int batchSize;
 
@@ -70,6 +76,7 @@ public class AnalysisExecutionService {
             AnalysisSnapshotService analysisSnapshotService,
             EngineClient engineClient,
             SecretMaskingService secretMaskingService,
+            AnalysisMetrics metrics,
             PlatformTransactionManager transactionManager,
             @Value("${engine.batch-size:100}") int batchSize
     ) {
@@ -84,6 +91,7 @@ public class AnalysisExecutionService {
         this.analysisSnapshotService = analysisSnapshotService;
         this.engineClient = engineClient;
         this.secretMaskingService = secretMaskingService;
+        this.metrics = metrics;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         // The engine accepts at most 500 files per request.
         this.batchSize = Math.max(1, Math.min(batchSize, 500));
@@ -112,6 +120,9 @@ public class AnalysisExecutionService {
         analysis.setStartedAt(OffsetDateTime.now());
         analysisRepository.save(analysis);
 
+        metrics.analysisStarted();
+        long startedNanos = System.nanoTime();
+        AnalysisStatus finalStatus = AnalysisStatus.CANCELLED;
         try {
             AnalysisSnapshotDto snapshot = analysisSnapshotService.getSnapshot(analysisId);
             int totalRules = Math.max(snapshot.rulesTotal(), 0);
@@ -122,10 +133,12 @@ public class AnalysisExecutionService {
             String basePath = repositoryJpaRepository.findById(repositoryId)
                     .map(Repository::getPathInSandbox)
                     .orElse(null);
+            log.info("Análisis iniciado analysisId={} reglas={} archivos={}", analysisId, totalRules, files.size());
 
             for (PolicySnapshotDto policySnapshot : snapshot.policies()) {
                 for (RuleSnapshotDto ruleSnapshot : policySnapshot.rules()) {
                     if (isCancelled(analysisId)) {
+                        log.info("Análisis cancelado analysisId={}", analysisId);
                         return;
                     }
                     executeRuleForFiles(analysis, policySnapshot, ruleSnapshot, files, basePath, traceId);
@@ -141,13 +154,21 @@ public class AnalysisExecutionService {
                 finalState.setProgress(BigDecimal.valueOf(100));
                 finalState.setCompletedAt(OffsetDateTime.now());
                 analysisRepository.save(finalState);
+                finalStatus = AnalysisStatus.COMPLETED;
+                log.info("Análisis completado analysisId={} duracionMs={}", analysisId,
+                        Duration.ofNanos(System.nanoTime() - startedNanos).toMillis());
             }
         } catch (Exception ex) {
+            finalStatus = AnalysisStatus.FAILED;
+            // The stack trace stays in the log, under the traceId of the request that started it.
+            log.error("Análisis fallido analysisId={}", analysisId, ex);
             Analysis failed = analysisRepository.findById(analysisId).orElseThrow();
             failed.setStatus(AnalysisStatus.FAILED);
             failed.setErrorMessage(ex.getMessage());
             failed.setCompletedAt(OffsetDateTime.now());
             analysisRepository.save(failed);
+        } finally {
+            metrics.analysisFinished(finalStatus.name());
         }
     }
 
@@ -190,18 +211,24 @@ public class AnalysisExecutionService {
             );
 
             ExecuteRuleResponse response;
+            long requestStartedNanos = System.nanoTime();
             try {
                 response = engineClient.executeRuleBatch(request, traceId);
             } catch (Exception ex) {
+                metrics.ruleExecuted(ruleSnapshot.type(), false, Duration.ofNanos(System.nanoTime() - requestStartedNanos));
+                log.warn("El motor no ejecutó la regla ruleId={} tipo={} archivos={}: {}",
+                        ruleSnapshot.ruleId(), ruleSnapshot.type(), batch.size(), ex.getMessage());
+                metrics.ruleError(ruleSnapshot.type(), "ENGINE_ERROR");
                 registerRuleError(analysis, policy, rule, "ENGINE_ERROR",
                         ex.getMessage() + " (" + batch.size() + " archivos sin analizar con esta regla)", null);
                 continue;
             }
+            metrics.ruleExecuted(ruleSnapshot.type(), true, Duration.ofNanos(System.nanoTime() - requestStartedNanos));
             if (isCancelled(analysis.getId())) {
                 return;
             }
             persistFindings(analysis, policy, rule, ruleSnapshot, byArtifactPath, response.findings());
-            persistEngineErrors(analysis, policy, rule, byArtifactPath, response.errors());
+            persistEngineErrors(analysis, policy, rule, ruleSnapshot.type(), byArtifactPath, response.errors());
         }
     }
 
@@ -258,6 +285,7 @@ public class AnalysisExecutionService {
             Analysis analysis,
             Policy policy,
             Rule rule,
+            String ruleType,
             Map<String, RepositoryFile> byArtifactPath,
             List<EngineRuleErrorResponse> errors
     ) {
@@ -267,11 +295,13 @@ public class AnalysisExecutionService {
         List<RuleExecutionError> entities = new ArrayList<>(errors.size());
         for (EngineRuleErrorResponse error : errors) {
             RepositoryFile file = error.filePath() != null ? byArtifactPath.get(error.filePath()) : null;
+            String errorCode = error.errorCode() != null ? error.errorCode() : "ENGINE_RULE_ERROR";
+            metrics.ruleError(ruleType, errorCode);
             entities.add(buildRuleError(
                     analysis,
                     policy,
                     rule,
-                    error.errorCode() != null ? error.errorCode() : "ENGINE_RULE_ERROR",
+                    errorCode,
                     error.message() != null ? error.message() : "Error de regla no especificado",
                     file != null ? file.getPath() : relativeToSandbox(error.filePath())
             ));

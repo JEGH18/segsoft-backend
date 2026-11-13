@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -51,73 +50,64 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String traceId = request.getHeader("X-Trace-Id");
-        if (!StringUtils.hasText(traceId)) {
-            traceId = UUID.randomUUID().toString();
+        // The traceId is already in the MDC: TraceIdFilter runs before the security chain.
+        String token = resolveToken(request);
+        if (ApiTokens.looksLikeApiToken(token)) {
+            if (authenticateApiToken(token, request, response)) {
+                filterChain.doFilter(request, response);
+            }
+            return;
         }
-        MDC.put("traceId", traceId);
+        if (token != null) {
+            JwtTokenProvider.TokenStatus status = jwtTokenProvider.checkToken(token);
 
-        try {
-            String token = resolveToken(request);
-            if (ApiTokens.looksLikeApiToken(token)) {
-                if (authenticateApiToken(token, request, response)) {
-                    filterChain.doFilter(request, response);
-                }
+            if (status == JwtTokenProvider.TokenStatus.EXPIRED) {
+                writeUnauthorized(response, "TOKEN_EXPIRED", "El token de acceso ha expirado");
                 return;
             }
-            if (token != null) {
-                JwtTokenProvider.TokenStatus status = jwtTokenProvider.checkToken(token);
 
-                if (status == JwtTokenProvider.TokenStatus.EXPIRED) {
-                    writeUnauthorized(response, "TOKEN_EXPIRED", "El token de acceso ha expirado");
+            if (status == JwtTokenProvider.TokenStatus.VALID) {
+                String username = jwtTokenProvider.extractUsername(token);
+
+                // The token alone would outlive a lock, a disabling or a deletion of its account.
+                try {
+                    accountAccessService.requireUsable(username, jwtTokenProvider.extractTokenVersion(token));
+                } catch (AccountLockedException | AuthException e) {
+                    if (isPublicAuthEndpoint(request)) {
+                        // Login, logout, unlock... must still work: the request just goes on
+                        // unauthenticated, as if the stale token had not been sent.
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
+                    if (e instanceof AccountLockedException locked) {
+                        writeError(response, 423, "ACCOUNT_LOCKED", locked.getMessage(),
+                                Map.of("minutesLeft", locked.getMinutesLeft()));
+                    } else {
+                        writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "SESSION_REVOKED",
+                                e.getMessage(), Map.of());
+                    }
                     return;
                 }
 
-                if (status == JwtTokenProvider.TokenStatus.VALID) {
-                    String username = jwtTokenProvider.extractUsername(token);
+                List<String> roles = jwtTokenProvider.extractRoles(token);
 
-                    // The token alone would outlive a lock, a disabling or a deletion of its account.
-                    try {
-                        accountAccessService.requireUsable(username, jwtTokenProvider.extractTokenVersion(token));
-                    } catch (AccountLockedException | AuthException e) {
-                        if (isPublicAuthEndpoint(request)) {
-                            // Login, logout, unlock... must still work: the request just goes on
-                            // unauthenticated, as if the stale token had not been sent.
-                            filterChain.doFilter(request, response);
-                            return;
-                        }
-                        if (e instanceof AccountLockedException locked) {
-                            writeError(response, 423, "ACCOUNT_LOCKED", locked.getMessage(),
-                                    Map.of("minutesLeft", locked.getMinutesLeft()));
-                        } else {
-                            writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "SESSION_REVOKED",
-                                    e.getMessage(), Map.of());
-                        }
-                        return;
-                    }
+                List<SimpleGrantedAuthority> authorities = roles.stream()
+                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                        .toList();
 
-                    List<String> roles = jwtTokenProvider.extractRoles(token);
+                UserDetails principal = User.withUsername(username)
+                        .password("")
+                        .authorities(authorities)
+                        .build();
 
-                    List<SimpleGrantedAuthority> authorities = roles.stream()
-                            .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
-                            .toList();
+                UsernamePasswordAuthenticationToken auth =
+                        new UsernamePasswordAuthenticationToken(principal, null, authorities);
 
-                    UserDetails principal = User.withUsername(username)
-                            .password("")
-                            .authorities(authorities)
-                            .build();
-
-                    UsernamePasswordAuthenticationToken auth =
-                            new UsernamePasswordAuthenticationToken(principal, null, authorities);
-
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                }
+                SecurityContextHolder.getContext().setAuthentication(auth);
             }
-
-            filterChain.doFilter(request, response);
-        } finally {
-            MDC.clear();
         }
+
+        filterChain.doFilter(request, response);
     }
 
     /**

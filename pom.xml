@@ -28,7 +28,8 @@
     <openpdf.version>1.3.35</openpdf.version>
     <pdfbox.version>3.0.7</pdfbox.version>
     <everit-json-schema.version>1.14.6</everit-json-schema.version>
-    <testcontainers.version>1.20.4</testcontainers.version>
+    <!-- 1.21.4+: talks to Docker Engine 29 (1.20.x fails with "Status 400" on its API) -->
+    <testcontainers.version>1.21.4</testcontainers.version>
   </properties>
 
   <dependencies>
@@ -187,6 +188,14 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <!-- META-INF/build-info.properties: version and build time in /actuator/info. -->
+          <execution>
+            <goals>
+              <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- Exclude *IntegrationTest from the default mvn test cycle.
