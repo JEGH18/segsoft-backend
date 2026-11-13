@@ -5,6 +5,7 @@ import co.icesi.pdgseg.dto.request.StartAnalysisRequest;
 import co.icesi.pdgseg.dto.response.AnalysisResponse;
 import co.icesi.pdgseg.dto.response.AnalysisResultsResponse;
 import co.icesi.pdgseg.dto.response.FindingResponse;
+import co.icesi.pdgseg.observability.TraceIdFilter;
 import co.icesi.pdgseg.service.AnalysisService;
 import co.icesi.pdgseg.service.FindingService;
 import co.icesi.pdgseg.service.ReportService;
@@ -48,10 +49,11 @@ public class AnalysisController {
     @Operation(summary = "Crear análisis", description = "Crea un análisis en estado QUEUED y dispara ejecución asíncrona")
     public ResponseEntity<AnalysisResponse> create(
             @Valid @RequestBody StartAnalysisRequest request,
-            @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
             Authentication authentication
     ) {
-        AnalysisResponse response = analysisService.startAnalysis(request.repositoryId(), authentication.getName(), traceId);
+        // The request's traceId (TraceIdFilter) follows the analysis into its async thread and the engine.
+        AnalysisResponse response = analysisService.startAnalysis(
+                request.repositoryId(), authentication.getName(), TraceIdFilter.current());
         return ResponseEntity.accepted().body(response);
     }
 

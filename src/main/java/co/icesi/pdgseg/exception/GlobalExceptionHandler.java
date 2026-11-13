@@ -11,6 +11,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.firewall.RequestRejectedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -21,6 +22,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import jakarta.persistence.OptimisticLockException;
 
@@ -237,6 +239,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleMaxUpload(MaxUploadSizeExceededException ex) {
         return errorBody(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE",
                 "El archivo supera el tamaño máximo permitido (100 MB).");
+    }
+
+    /** A path no controller or endpoint serves: 404, not an unexpected error. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException ex) {
+        return errorBody(HttpStatus.NOT_FOUND, "NOT_FOUND", "Recurso no encontrado");
+    }
+
+    /** Spring Security's firewall rejected the request (control characters in a header, for instance). */
+    @ExceptionHandler(RequestRejectedException.class)
+    public ResponseEntity<Map<String, Object>> handleRequestRejected(RequestRejectedException ex) {
+        log.warn("Petición rechazada por el firewall [traceId={}]: {}", traceId(), ex.getMessage());
+        return errorBody(HttpStatus.BAD_REQUEST, "REQUEST_REJECTED", "La petición contiene valores no permitidos");
     }
 
     @ExceptionHandler(Exception.class)

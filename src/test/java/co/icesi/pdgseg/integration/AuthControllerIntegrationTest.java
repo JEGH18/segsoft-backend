@@ -122,7 +122,9 @@ class AuthControllerIntegrationTest extends PostgreSQLContainerBase {
 
     @Test
     void actuatorHealth_withoutToken_returns200() throws Exception {
-        mockMvc.perform(get("/actuator/health"))
+        // Liveness: /actuator/health also checks the engine, which these tests do not run
+        // (ObservabilityIntegrationTest covers it with a stub engine).
+        mockMvc.perform(get("/actuator/health/liveness"))
                 .andExpect(status().isOk());
     }
 }
